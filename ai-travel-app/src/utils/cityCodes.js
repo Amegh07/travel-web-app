@@ -1,4 +1,3 @@
-
 // A simple dictionary for common cities
 const cityDatabase = {
   "paris": "PAR",
@@ -43,5 +42,5 @@ export const getCityCode = (cityName) => {
 
   // 2. Try to find the name in our database
   const normalized = cityName.toLowerCase().trim();
-  return cityDatabase[normalized] || cityName.toUpperCase(); // Fallback: send input as-is if not found
+  return cityDatabase[normalized] || cityName.toUpperCase();
 };

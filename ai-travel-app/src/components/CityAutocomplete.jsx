@@ -32,9 +32,10 @@ const CityAutocomplete = ({ label, value, onSelect, icon: Icon }) => {
         setLoading(true);
         try {
           const cities = await searchCities(query);
-          setResults(cities);
+          setResults(cities || []);
         } catch (error) {
           console.error("Search failed", error);
+          setResults([]);
         } finally {
           setLoading(false);
         }
@@ -47,8 +48,9 @@ const CityAutocomplete = ({ label, value, onSelect, icon: Icon }) => {
   }, [query, isOpen]);
 
   const handleSelect = (city) => {
-    setQuery(`${city.name} (${city.code})`);
-    onSelect(city.code); // Sends "LHR" to the parent
+    const displayName = `${city.name} (${city.code})`;
+    setQuery(displayName);
+    onSelect(displayName); // Send full formatted name
     setIsOpen(false);
   };
 
@@ -62,7 +64,7 @@ const CityAutocomplete = ({ label, value, onSelect, icon: Icon }) => {
         
         <input 
           type="text" 
-          placeholder="Type a city (e.g. New York)"
+          placeholder="Type a city or airport (e.g. New York, JFK)"
           className="w-full pl-10 p-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all uppercase placeholder:normal-case"
           value={query}
           onChange={(e) => {

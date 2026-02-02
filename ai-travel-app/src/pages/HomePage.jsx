@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { MapPin, Calendar, Sparkles, Plus, Minus, Wallet, Palmtree, Utensils, Music, Camera, Moon } from 'lucide-react';
+import { MapPin, Calendar, Sparkles, Plus, Minus, Wallet, Palmtree, Utensils, Music, Camera, Moon, Mic, Globe } from 'lucide-react';
 
 const HomePage = () => {
   const navigate = useNavigate();
@@ -15,6 +15,30 @@ const HomePage = () => {
     budget: 'Comfortable',
     interests: []
   });
+
+  // Gamification: Travel Score
+  const [travelScore, setTravelScore] = useState(0);
+
+  useEffect(() => {
+    const visited = JSON.parse(localStorage.getItem('visited_cities') || '[]');
+    setTravelScore(visited.length);
+  }, []);
+
+  // Voice Input Handler
+  const handleVoiceInput = (field) => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      const recognition = new SpeechRecognition();
+      recognition.lang = 'en-US';
+      recognition.start();
+      recognition.onresult = (event) => {
+        const transcript = event.results[0][0].transcript.replace(/\.$/, "");
+        setTripDetails(prev => ({ ...prev, [field]: transcript }));
+      };
+    } else {
+      alert("Voice input is not supported in this browser.");
+    }
+  };
 
   const interestsList = [
     { id: 'culture', label: 'Culture', icon: <Camera size={16} /> },
@@ -51,6 +75,12 @@ const HomePage = () => {
             <h1 className="text-3xl font-bold">Plan Your Trip</h1>
           </div>
           <p className="text-blue-100">Fill in the details and let AI do the rest</p>
+          
+          {/* Gamification Badge */}
+          <div className="mt-4 inline-flex items-center gap-2 bg-blue-700/50 px-4 py-1 rounded-full text-sm border border-blue-500/30">
+            <Globe size={14} className="text-blue-200" />
+            <span className="text-blue-100">Travel Score: <span className="font-bold text-white">{travelScore}</span> countries visited</span>
+          </div>
         </div>
 
         {/* Form Section */}
@@ -69,6 +99,13 @@ const HomePage = () => {
                   value={tripDetails.from}
                   onChange={(e) => setTripDetails({...tripDetails, from: e.target.value})}
                 />
+                <button 
+                  onClick={() => handleVoiceInput('from')}
+                  className="absolute right-3 top-3.5 text-gray-400 hover:text-blue-600 transition-colors"
+                  title="Use Voice Input"
+                >
+                  <Mic size={18} />
+                </button>
               </div>
             </div>
 
@@ -83,18 +120,34 @@ const HomePage = () => {
                   value={tripDetails.to}
                   onChange={(e) => setTripDetails({...tripDetails, to: e.target.value})}
                 />
+                <button 
+                  onClick={() => handleVoiceInput('to')}
+                  className="absolute right-3 top-3.5 text-gray-400 hover:text-blue-600 transition-colors"
+                  title="Use Voice Input"
+                >
+                  <Mic size={18} />
+                </button>
               </div>
             </div>
 
             <div className="space-y-2">
               <label className="text-sm font-semibold text-gray-600 ml-1">Country</label>
-              <input 
-                type="text" 
-                placeholder="e.g., France"
-                className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all"
-                value={tripDetails.country}
-                onChange={(e) => setTripDetails({...tripDetails, country: e.target.value})}
-              />
+              <div className="relative">
+                <input 
+                  type="text" 
+                  placeholder="e.g., France"
+                  className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                  value={tripDetails.country}
+                  onChange={(e) => setTripDetails({...tripDetails, country: e.target.value})}
+                />
+                <button 
+                  onClick={() => handleVoiceInput('country')}
+                  className="absolute right-3 top-3.5 text-gray-400 hover:text-blue-600 transition-colors"
+                  title="Use Voice Input"
+                >
+                  <Mic size={18} />
+                </button>
+              </div>
             </div>
           </div>
 

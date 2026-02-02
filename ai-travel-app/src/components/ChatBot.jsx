@@ -1,6 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { MessageCircle, X, Send, Loader2, Sparkles, MapPin, Utensils, Camera, Wallet } from 'lucide-react';
-// REMOVED: import { motion, AnimatePresence } from 'framer-motion';
+import { Sparkles, Loader2 } from 'lucide-react';
 import { chatWithGemini } from '../services/geminiAPI';
 
 const ChatBot = ({ destination }) => {

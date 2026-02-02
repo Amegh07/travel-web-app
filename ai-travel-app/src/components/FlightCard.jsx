@@ -1,75 +1,79 @@
-import { ArrowRight, PlaneTakeoff, PlaneLanding } from 'lucide-react';
+import React from 'react';
+import { Plane, ArrowRight } from 'lucide-react';
 
-const FlightCard = ({ flight }) => {
-  const price = flight.price.total;
-  const currency = flight.price.currency; // This will now be INR from API
+const FlightCard = ({ flights }) => {
+  // Safety Check: If no flights, show a clean "Empty State"
+  if (!flights || !Array.isArray(flights) || flights.length === 0) {
+    return (
+      <div className="bg-white/50 backdrop-blur-sm rounded-2xl p-8 border-2 border-dashed border-gray-300 text-center">
+        <div className="bg-gray-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+          <Plane className="w-8 h-8 text-gray-400" />
+        </div>
+        <h3 className="text-lg font-bold text-gray-600">No flights found</h3>
+        <p className="text-sm text-gray-400">Try changing dates or destination.</p>
+      </div>
+    );
+  }
 
   return (
-    <div className="bg-white rounded-2xl p-5 mb-4 shadow-sm border border-gray-100 hover:shadow-md transition-all group">
-      <div className="flex flex-col md:flex-row justify-between gap-6">
-        
-        {/* Flight Segments (Left Side) */}
-        <div className="flex-1 space-y-6">
-          {flight.itineraries.map((itinerary, index) => {
-            const segment = itinerary.segments[0];
-            const isReturn = index === 1; // Index 1 means it's the return trip
+    <div className="space-y-6 mb-12">
+      <h2 className="text-2xl font-bold text-gray-800 flex items-center gap-3">
+        <span className="bg-blue-100 p-2 rounded-lg"><Plane className="w-6 h-6 text-blue-600" /></span>
+        Best Flights
+      </h2>
 
-            return (
-              <div key={index} className="flex items-center gap-4">
-                {/* Airline Code */}
-                <div className={`w-12 h-12 rounded-full flex items-center justify-center font-bold text-sm ${isReturn ? 'bg-orange-50 text-orange-600' : 'bg-blue-50 text-blue-600'}`}>
-                  {segment.carrierCode}
+      <div className="grid gap-4">
+        {flights.map((flight, index) => {
+          const price = flight.price?.total || "N/A";
+          const currency = flight.price?.currency || "EUR";
+          const itinerary = flight.itineraries?.[0];
+          const segments = itinerary?.segments || [];
+          const firstSegment = segments[0] || {};
+          const lastSegment = segments[segments.length - 1] || {};
+          const airlineCode = flight.validatingAirlineCodes?.[0] || "UN";
+          const logoUrl = `https://pics.avs.io/200/200/${airlineCode}.png`; 
+          let duration = itinerary?.duration || "N/A";
+          duration = duration.replace("PT", "").replace("H", "h ").replace("M", "m");
+
+          return (
+            <div key={flight.id || index} className="group bg-white rounded-2xl p-5 shadow-sm border border-gray-100 hover:shadow-xl hover:border-blue-200 transition-all duration-300 relative overflow-hidden">
+              <div className="flex flex-col md:flex-row items-center justify-between gap-6">
+                <div className="flex items-center gap-4 w-full md:w-1/4">
+                  <div className="w-12 h-12 rounded-full border border-gray-100 overflow-hidden bg-white p-1">
+                    <img src={logoUrl} alt={airlineCode} className="w-full h-full object-contain" onError={(e) => {e.target.src='https://placehold.co/100x100?text=Flight'}} />
+                  </div>
+                  <div>
+                    <p className="font-bold text-gray-900">{airlineCode} Airlines</p>
+                  </div>
                 </div>
-
-                {/* Details */}
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded tracking-wide ${isReturn ? 'bg-orange-100 text-orange-700' : 'bg-blue-100 text-blue-700'}`}>
-                      {isReturn ? 'RETURN' : 'OUTBOUND'}
-                    </span>
-                    <span className="text-xs text-gray-400">• {segment.duration.replace('PT', '').toLowerCase()}</span>
+                <div className="flex-1 w-full flex items-center justify-center gap-6 text-center">
+                  <div>
+                    <p className="text-2xl font-black text-gray-800">{firstSegment.departure?.iataCode}</p>
+                    <p className="text-xs text-gray-400">Depart</p> 
                   </div>
-                  
-                  <div className="flex items-center gap-3">
-                    <div>
-                      <p className="font-bold text-gray-800 text-lg">{segment.departure.iataCode}</p>
-                      <p className="text-xs text-gray-500">{segment.departure.at.split('T')[1].slice(0,5)}</p>
-                    </div>
-
-                    {/* Flight Path Visual */}
-                    <div className="flex-1 flex flex-col items-center px-2 min-w-[60px]">
-                      <div className="w-full h-[1px] bg-gray-300 relative">
-                        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-white px-1">
-                          {isReturn ? <PlaneLanding size={14} className="text-gray-400" /> : <PlaneTakeoff size={14} className="text-gray-400" />}
-                        </div>
-                      </div>
-                      <p className="text-[10px] text-gray-400 mt-1">{segment.numberOfStops === 0 ? 'Direct' : `${segment.numberOfStops} Stop`}</p>
-                    </div>
-
-                    <div>
-                      <p className="font-bold text-gray-800 text-lg">{segment.arrival.iataCode}</p>
-                      <p className="text-xs text-gray-500">{segment.arrival.at.split('T')[1].slice(0,5)}</p>
+                  <div className="flex flex-col items-center w-full max-w-[120px]">
+                    <p className="text-xs text-gray-500 font-medium mb-1">{duration}</p>
+                    <div className="w-full h-[2px] bg-gray-200 relative flex items-center justify-center">
+                      <div className="w-2 h-2 bg-gray-300 rounded-full absolute left-0" />
+                      <Plane className="w-4 h-4 text-blue-500 fill-current rotate-90 absolute" />
+                      <div className="w-2 h-2 bg-gray-300 rounded-full absolute right-0" />
                     </div>
                   </div>
+                  <div>
+                    <p className="text-2xl font-black text-gray-800">{lastSegment.arrival?.iataCode}</p>
+                    <p className="text-xs text-gray-400">Arrive</p>
+                  </div>
+                </div>
+                <div className="w-full md:w-auto text-right pl-6 md:border-l border-gray-100 flex flex-row md:flex-col justify-between items-center md:items-end">
+                  <p className="text-3xl font-black text-blue-600">{currency} {price}</p>
+                  <button className="bg-gray-900 hover:bg-blue-600 text-white px-8 py-3 rounded-xl font-bold transition-colors shadow-lg shadow-gray-200 w-full md:w-auto flex items-center justify-center gap-2">
+                    Select <ArrowRight className="w-4 h-4" />
+                  </button>
                 </div>
               </div>
-            );
-          })}
-        </div>
-
-        {/* Price & Button (Right Side) */}
-        <div className="flex flex-row md:flex-col items-center md:items-end justify-between md:justify-center border-t md:border-t-0 md:border-l border-gray-100 pt-4 md:pt-0 md:pl-6 gap-2 min-w-[140px]">
-          <div className="text-right">
-            <p className="text-xs text-gray-400 font-medium">Total Price</p>
-            <p className="text-2xl font-bold text-blue-600">
-              {currency} {parseFloat(price).toLocaleString('en-IN')}
-            </p>
-          </div>
-          <button className="bg-gray-900 hover:bg-black text-white px-6 py-3 rounded-xl font-medium transition-colors text-sm flex items-center gap-2 w-full justify-center shadow-lg shadow-gray-200">
-            Select <ArrowRight size={14} />
-          </button>
-        </div>
-
+            </div>
+          );
+        })}
       </div>
     </div>
   );
