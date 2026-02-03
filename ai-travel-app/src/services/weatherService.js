@@ -1,9 +1,14 @@
-export const getWeather = async (city) => {
+export const getWeather = async (cityInput) => {
   try {
-    // 1. First, we need coordinates (Lat/Lon) for the city
-    // We use a free geocoding API for this
+    if (!cityInput) return null;
+
+    // 1. CLEAN THE INPUT: "London (LON)" -> "London"
+    // This fixes the "City not found" error
+    const cleanCity = cityInput.split('(')[0].trim();
+
+    // 2. Geocoding
     const geoRes = await fetch(
-      `https://geocoding-api.open-meteo.com/v1/search?name=${city}&count=1&language=en&format=json`
+      `https://geocoding-api.open-meteo.com/v1/search?name=${cleanCity}&count=1&language=en&format=json`
     );
     const geoData = await geoRes.json();
 
@@ -11,15 +16,15 @@ export const getWeather = async (city) => {
 
     const { latitude, longitude, name } = geoData.results[0];
 
-    // 2. Now fetch the actual weather
+    // 3. Fetch Weather
     const weatherRes = await fetch(
       `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current_weather=true`
     );
     const weatherData = await weatherRes.json();
 
     return {
-      temp: weatherData.current_weather.temperature, // e.g., 24
-      condition: decodeWeatherCode(weatherData.current_weather.weathercode), // e.g., "Rain"
+      temp: weatherData.current_weather.temperature,
+      condition: decodeWeatherCode(weatherData.current_weather.weathercode),
       city: name
     };
   } catch (error) {
@@ -28,8 +33,6 @@ export const getWeather = async (city) => {
   }
 };
 
-// Helper: Open-Meteo uses codes (0, 1, 2, etc.) instead of text.
-// This translates them into human-readable text.
 function decodeWeatherCode(code) {
   const codes = {
     0: "Clear Sky",
