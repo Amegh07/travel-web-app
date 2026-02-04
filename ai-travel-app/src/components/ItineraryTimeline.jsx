@@ -1,121 +1,100 @@
-import { useEffect, useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { Clock, MapPin, Sparkles, Loader2, ChevronDown } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
 import { generateItinerary } from '../services/geminiAPI';
+import { MapPin, Calendar, Clock, Loader2, Info } from 'lucide-react';
+import { motion } from 'framer-motion';
 
-const ItineraryTimeline = ({ destination, budget, interests }) => {
+const ItineraryTimeline = ({ destination, days, budget, interests }) => {
   const [itinerary, setItinerary] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [expandedDay, setExpandedDay] = useState(null);
+  const [error, setError] = useState(false);
 
   useEffect(() => {
+    let isMounted = true;
+
     const fetchItinerary = async () => {
-      if (!destination) return;
       setLoading(true);
+      setError(false);
       try {
-        const plan = await generateItinerary(destination, 3, budget, interests);
-        if (plan && plan.length > 0) {
-          setItinerary(plan);
-          setExpandedDay(0);
-        } else {
-          // Fallback handled in API, but double check here
-          setItinerary([
-            { day: 1, theme: "Arrival", activities: ["Check in", "Relax", "Dinner"] },
-            { day: 2, theme: "Explore", activities: ["City Tour", "Museum", "Park"] },
-            { day: 3, theme: "Departure", activities: ["Shopping", "Airport"] }
-          ]);
-          setExpandedDay(0);
+        const data = await generateItinerary(destination, days, budget, interests);
+        if (isMounted) {
+          if (data && data.length > 0) {
+            setItinerary(data);
+          } else {
+            setError(true);
+          }
         }
       } catch (err) {
-        console.error("Itinerary Error", err);
+        if (isMounted) setError(true);
       } finally {
-        setLoading(false);
+        if (isMounted) setLoading(false);
       }
     };
 
-    fetchItinerary();
-  }, [destination, budget, interests]);
-
-  // SAFE RENDERING HELPER
-  const renderActivityText = (activity) => {
-    if (typeof activity === 'string') return activity;
-    if (typeof activity === 'object' && activity !== null) {
-      return activity.name || activity.text || activity.description || "Activity details";
+    if (destination) {
+      fetchItinerary();
     }
-    return "Activity";
-  };
+
+    return () => { isMounted = false; };
+  }, [destination, days, budget, interests]);
+
+  if (loading) {
+    return (
+      <div className="bg-white/5 backdrop-blur-md rounded-2xl p-6 border border-white/10 text-center min-h-[300px] flex flex-col items-center justify-center">
+        <Loader2 className="animate-spin text-blue-400 w-10 h-10 mb-4" />
+        <h3 className="text-xl font-bold text-white">AI Suggested Itinerary</h3>
+        <p className="text-white/50 text-sm mt-2">Curating a custom plan for {days} days...</p>
+      </div>
+    );
+  }
+
+  if (error || itinerary.length === 0) {
+    return (
+      <div className="bg-white/5 backdrop-blur-md rounded-2xl p-6 border border-white/10 text-center">
+        <Info className="text-white/50 w-10 h-10 mx-auto mb-2" />
+        <h3 className="text-xl font-bold text-white">Itinerary Unavailable</h3>
+        <p className="text-white/50 text-sm">We couldn't generate a plan right now. Try refreshing.</p>
+      </div>
+    );
+  }
 
   return (
-    <motion.section 
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.6 }}
-      className="backdrop-blur-xl bg-white/60 rounded-3xl p-8 border border-white/40 shadow-xl"
-    >
-      <div className="flex items-center gap-3 mb-8">
-        <div className="bg-gradient-to-br from-blue-600 to-blue-500 p-2.5 rounded-xl text-white shadow-lg">
-          <Sparkles size={24} />
+    <div className="bg-white/5 backdrop-blur-md rounded-2xl p-6 border border-white/10">
+      <div className="flex items-center gap-2 mb-6">
+        <div className="bg-blue-500/20 p-2 rounded-lg">
+          <Calendar className="text-blue-400 w-5 h-5" />
         </div>
-        <div>
-          <h2 className="text-2xl font-bold text-gray-900">AI Suggested Itinerary</h2>
-          <p className="text-gray-600 text-sm">Custom plan for your trip</p>
-        </div>
+        <h3 className="text-xl font-bold text-white">AI Suggested Itinerary</h3>
       </div>
 
-      {loading ? (
-        <div className="flex flex-col items-center justify-center py-12 text-gray-400">
-          <Loader2 size={40} className="text-blue-500 mb-4 animate-spin" />
-          <p>Gemini is curating your experience...</p>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {itinerary.map((item, index) => (
-            <motion.div key={index} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: index * 0.1 }}>
-              <button
-                onClick={() => setExpandedDay(expandedDay === index ? null : index)}
-                className="w-full flex items-center justify-between p-4 bg-gradient-to-r from-blue-50/50 to-transparent rounded-xl hover:bg-blue-100/30 transition-all group border border-white/40"
-              >
-                <div className="flex items-center gap-4 text-left">
-                  <div className="flex items-center justify-center w-12 h-12 rounded-full bg-gradient-to-br from-blue-500 to-blue-600 text-white font-bold text-lg shadow-lg">
-                    {item.day}
-                  </div>
-                  <div>
-                    <h3 className="font-bold text-gray-900 text-lg">{item.theme}</h3>
-                    <p className="text-sm text-gray-600">{item.activities?.length || 0} activities planned</p>
+      <div className="space-y-8 relative pl-4 border-l-2 border-white/10">
+        {itinerary.map((dayPlan, index) => (
+          <motion.div 
+            key={index}
+            initial={{ opacity: 0, x: -20 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: index * 0.1 }}
+            className="relative"
+          >
+            <span className="absolute -left-[25px] top-0 bg-blue-500 text-white text-xs font-bold w-6 h-6 rounded-full flex items-center justify-center border-2 border-black">
+              {dayPlan.day}
+            </span>
+            
+            <h4 className="text-lg font-bold text-blue-200 mb-2">{dayPlan.theme || `Day ${dayPlan.day}`}</h4>
+            
+            <div className="space-y-3">
+              {dayPlan.activities && dayPlan.activities.map((activity, actIndex) => (
+                <div key={actIndex} className="bg-white/5 p-3 rounded-xl border border-white/5 hover:bg-white/10 transition-colors">
+                  <div className="flex gap-3">
+                    <Clock className="w-4 h-4 text-white/40 mt-1 shrink-0" />
+                    <p className="text-sm text-white/80">{activity}</p>
                   </div>
                 </div>
-                <ChevronDown size={20} className={`text-blue-600 transition-transform duration-300 ${expandedDay === index ? 'rotate-180' : ''}`} />
-              </button>
-
-              <AnimatePresence>
-                {expandedDay === index && (
-                  <motion.div
-                    initial={{ opacity: 0, height: 0 }}
-                    animate={{ opacity: 1, height: 'auto' }}
-                    exit={{ opacity: 0, height: 0 }}
-                    className="overflow-hidden"
-                  >
-                    <div className="p-4 pt-2 bg-blue-50/40 rounded-b-xl border-t border-blue-200/30 space-y-3">
-                      {item.activities?.map((activity, i) => (
-                        <div key={i} className="flex items-start gap-3 p-2 rounded-lg hover:bg-white/50 transition-all">
-                          <div className="mt-1 flex-shrink-0 w-5 h-5 rounded-full bg-blue-500/20 flex items-center justify-center">
-                            <Clock size={14} className="text-blue-600" />
-                          </div>
-                          <span className="text-gray-700 text-sm font-medium">
-                            {/* THIS LINE PREVENTS THE CRASH */}
-                            {renderActivityText(activity)}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </motion.div>
-          ))}
-        </div>
-      )}
-    </motion.section>
+              ))}
+            </div>
+          </motion.div>
+        ))}
+      </div>
+    </div>
   );
 };
 
