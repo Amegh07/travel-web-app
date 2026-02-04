@@ -1,16 +1,17 @@
 import { useState } from 'react';
-import { Calendar, Wallet, MapPin, Search, Plane, Sparkles } from 'lucide-react';
+import { Calendar, Wallet, Search, Sparkles, PenTool } from 'lucide-react';
 import CityAutocomplete from './CityAutocomplete';
 
 const SearchForm = ({ onSearch }) => {
   const [tripType, setTripType] = useState('round');
-  const [fromCity, setFromCity] = useState(null); // Stores full object
-  const [toCity, setToCity] = useState(null);     // Stores full object
+  const [fromCity, setFromCity] = useState(null);
+  const [toCity, setToCity] = useState(null);
   const [departDate, setDepartDate] = useState('');
   const [returnDate, setReturnDate] = useState('');
   const [budget, setBudget] = useState(2000);
   const [currency, setCurrency] = useState('USD');
   const [interests, setInterests] = useState([]);
+  const [customInterest, setCustomInterest] = useState(''); // 🆕 New State
 
   const INTEREST_TAGS = [
     { id: 'culture', label: '🏛️ Culture' },
@@ -26,9 +27,6 @@ const SearchForm = ({ onSearch }) => {
   };
 
   const handleSearch = () => {
-    console.log("🖱️ Search Button Clicked");
-
-    // 1. VALIDATION
     if (!fromCity || !toCity) {
       alert("Please select both 'From' and 'To' cities.");
       return;
@@ -38,26 +36,21 @@ const SearchForm = ({ onSearch }) => {
       return;
     }
 
-    // 2. PREPARE DATA (Extract IATA Codes)
     const searchPayload = {
-      fromCity: fromCity.iataCode, // Extracts "COK" from object
-      toCity: toCity.iataCode,     // Extracts "DEL" from object
+      fromCity: fromCity.iataCode,
+      toCity: toCity.iataCode,
+      destinationName: toCity.name, // Send name for AI
       departureDate: departDate,
       returnDate: returnDate,
       budget,
       currency,
       interests,
+      customInterest, // 🆕 Sending custom text
       tripType
     };
 
     console.log("🚀 Sending Search:", searchPayload);
-    
-    // 3. SEND TO APP
-    if (onSearch) {
-      onSearch(searchPayload);
-    } else {
-      console.error("❌ ERROR: onSearch prop is missing in SearchForm!");
-    }
+    if (onSearch) onSearch(searchPayload);
   };
 
   return (
@@ -86,7 +79,7 @@ const SearchForm = ({ onSearch }) => {
         <div className="space-y-6">
           <CityAutocomplete 
             label="From City" 
-            onSelect={setFromCity} // ✅ Captures the selected object
+            onSelect={setFromCity} 
             initialValue={fromCity ? `${fromCity.name} (${fromCity.iataCode})` : ''}
           />
           <CityAutocomplete 
@@ -155,8 +148,10 @@ const SearchForm = ({ onSearch }) => {
 
       {/* INTERESTS */}
       <div className="mb-8">
-        <label className="block text-sm font-bold mb-3 text-blue-200">Interests</label>
-        <div className="flex flex-wrap gap-3">
+        <label className="block text-sm font-bold mb-3 text-blue-200">Trip Vibe & Interests</label>
+        
+        {/* Pills */}
+        <div className="flex flex-wrap gap-3 mb-4">
           {INTEREST_TAGS.map((tag) => (
             <button
               key={tag.id}
@@ -170,6 +165,18 @@ const SearchForm = ({ onSearch }) => {
               {tag.label}
             </button>
           ))}
+        </div>
+
+        {/* 🆕 Custom Interest Input */}
+        <div className="relative">
+          <Sparkles className="absolute left-3 top-3.5 text-yellow-400" size={18} />
+          <input 
+            type="text" 
+            placeholder="Anything specific? (e.g. Anime, Vegan Food, History, Hidden Gems)..." 
+            className="w-full bg-white/5 p-3 pl-10 rounded-xl text-white border border-white/10 focus:border-blue-500 outline-none placeholder-white/30"
+            value={customInterest}
+            onChange={(e) => setCustomInterest(e.target.value)}
+          />
         </div>
       </div>
 

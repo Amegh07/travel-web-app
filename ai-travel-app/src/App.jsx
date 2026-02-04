@@ -1,68 +1,42 @@
-import { useState, useEffect } from 'react';
+import { Routes, Route, useNavigate } from 'react-router-dom';
 import SearchForm from './components/SearchForm';
 import ResultsPage from './pages/ResultsPage';
 
-const App = () => {
-  // 1. Initialize state from Session Storage (Clears when tab closes)
-  const [searchData, setSearchData] = useState(() => {
-    try {
-      const saved = sessionStorage.getItem('travex_search');
-      return saved ? JSON.parse(saved) : null;
-    } catch (e) {
-      return null;
-    }
-  });
+function App() {
+  const navigate = useNavigate();
 
-  // 2. Sync state to Session Storage
-  useEffect(() => {
-    if (searchData) {
-      sessionStorage.setItem('travex_search', JSON.stringify(searchData));
-    } else {
-      sessionStorage.removeItem('travex_search');
-    }
-  }, [searchData]);
+  const handleSearch = (searchData) => {
+    console.log("✈️ Navigating to Results with:", searchData);
+    // This pushes the user to /results and passes the data
+    navigate('/results', { state: searchData });
+  };
 
   return (
-    <div className="min-h-screen bg-black relative overflow-hidden font-sans text-gray-100">
-      
-      {/* Background Image */}
-      <div 
-        className="absolute inset-0 z-0 opacity-50"
-        style={{
-          backgroundImage: 'url("https://images.unsplash.com/photo-1436491865332-7a61a109cc05?auto=format&fit=crop&q=80")',
-          backgroundSize: 'cover',
-          backgroundPosition: 'center',
-        }}
-      />
-
-      {/* Content Layer */}
-      <div className="relative z-10">
-        {!searchData ? (
-          <div className="min-h-screen flex flex-col items-center justify-center p-4">
-            
-            {/* Logo */}
-            <div className="mb-8">
-              <h1 className="text-5xl md:text-7xl font-black tracking-tighter bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-emerald-400 filter drop-shadow-lg">
+    <div className="min-h-screen bg-slate-950 text-white">
+      <Routes>
+        {/* HOME PAGE */}
+        <Route path="/" element={
+          <div className="flex flex-col items-center justify-center min-h-screen p-4 bg-[url('https://images.unsplash.com/photo-1436491865332-7a61a109cc05?q=80&w=2074&auto=format&fit=crop')] bg-cover bg-center">
+            <div className="absolute inset-0 bg-black/50 backdrop-blur-sm"></div>
+            <div className="relative z-10 w-full max-w-4xl space-y-8 text-center">
+              <h1 className="text-5xl md:text-7xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-purple-400 to-pink-400 drop-shadow-lg">
                 TRAVEX
               </h1>
+              <p className="text-xl text-gray-200 font-medium">
+                AI-Powered Itineraries & Smart Packing Lists
+              </p>
+              
+              {/* Pass the handleSearch function here */}
+              <SearchForm onSearch={handleSearch} />
             </div>
-
-            {/* Search Form */}
-            <div className="w-full max-w-4xl">
-              <SearchForm onSearch={(data) => setSearchData(data)} />
-            </div>
-
           </div>
-        ) : (
-          /* Results View */
-          <ResultsPage 
-            searchData={searchData} 
-            onBack={() => setSearchData(null)} 
-          />
-        )}
-      </div>
+        } />
+
+        {/* RESULTS PAGE */}
+        <Route path="/results" element={<ResultsPage />} />
+      </Routes>
     </div>
   );
-};
+}
 
 export default App;
