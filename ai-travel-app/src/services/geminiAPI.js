@@ -1,146 +1,82 @@
-// ai-travel-app/src/services/geminiAPI.js
+/* eslint-disable no-undef */
+import Groq from "groq-sdk";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
-const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
-const GROQ_MODEL = "mixtral-8x7b-32768"; // Very fast, high quality
+// 1. CONFIGURATION
+// Read keys from window.ENV (safest method)
+const GROQ_KEY = window.ENV?.GROQ_API_KEY || "";
+const GEMINI_KEY = window.ENV?.GEMINI_API_KEY || "";
 
-// Helper: Call Groq API
-async function callGroq(prompt) {
-  const apiKey = import.meta.env.VITE_GROQ_API_KEY;
-  
-  if (!apiKey) {
-    console.error("Missing VITE_GROQ_API_KEY in .env");
-    throw new Error("API Key missing");
-  }
+const TEXT_MODEL = "llama3-70b-8192";
+const BACKUP_MODEL = "gemini-2.5-flash"; 
+
+// 2. INITIALIZE CLIENTS
+const groq = new Groq({ apiKey: GROQ_KEY, dangerouslyAllowBrowser: true });
+const genAI = new GoogleGenerativeAI(GEMINI_KEY);
+
+// 3. MAIN ROUTER
+export const generateItinerary = async (tripData, imageFile = null) => {
+  console.log("🚀 Router Started");
+
+  // Check for valid image file
+  const validImage = (imageFile instanceof File || imageFile instanceof Blob) ? imageFile : null;
 
   try {
-    const response = await fetch(GROQ_API_URL, {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${apiKey}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        model: GROQ_MODEL,
-        messages: [
-          { role: "system", content: "You are a helpful travel assistant. Output strictly valid JSON." },
-          { role: "user", content: prompt }
-        ],
-        temperature: 0.5,
-        max_tokens: 2048
-      })
-    });
-
-    if (!response.ok) {
-        // Handle 429 (Rate Limit) or other errors
-        if (response.status === 429) throw new Error("Rate Limited");
-        throw new Error(`Groq API Error: ${response.status}`);
+    // A. VISION -> GEMINI
+    if (validImage) {
+       console.log("📸 Image detected. Using Gemini Vision...");
+       return await callGeminiVision(tripData, validImage);
     }
 
-    const data = await response.json();
-    return data.choices[0]?.message?.content || "";
-    
-  } catch (error) {
-    console.error("AI Call Failed:", error);
-    throw error;
+    // B. TEXT -> GROQ
+    console.log(`⚡ Text Request. Using Groq (${TEXT_MODEL})...`);
+    return await callGroqText(tripData);
+
+  } catch (primaryError) {
+    console.error("❌ Groq Failed. Switching to Backup...", primaryError);
+    // C. BACKUP -> GEMINI
+    return await callGeminiText(tripData);
   }
+};
+
+// --- WORKER FUNCTIONS ---
+
+async function callGroqText(tripData) {
+  const completion = await groq.chat.completions.create({
+    messages: [
+      { role: "system", content: "Return strict JSON only." },
+      { role: "user", content: `Create a trip to ${tripData.destination} for ${tripData.dates}. Budget: ${tripData.budget}` }
+    ],
+    model: TEXT_MODEL,
+    response_format: { type: "json_object" }
+  });
+  return JSON.parse(completion.choices[0].message.content);
 }
 
-// --- 1. TRANSPORT OPTIONS ---
-export async function getTransportOptions(origin, destination) {
-  const prompt = `
-    I am traveling from ${origin} to ${destination}.
-    Analyze the best ways to travel (Flight, Train, Bus, Car).
-    Return a JSON array with 3 options.
-    Format:
-    [
-      {
-        "mode": "Train",
-        "title": "High Speed Rail",
-        "duration": "2h 30m",
-        "cost": "$50",
-        "recommended": true
-      },
-      {
-        "mode": "Bus",
-        "title": "Express Bus",
-        "duration": "5h",
-        "cost": "$20",
-        "recommended": false
-      }
-    ]
-    Return ONLY valid JSON. No markdown formatting.
-  `;
-
-  try {
-    const text = await callGroq(prompt);
-    return parseJSON(text) || [];
-  } catch (e) {
-    // Fallback if AI fails
-    return [
-      { mode: "Flight", title: "Check Availability", duration: "Varies", cost: "See below", recommended: true },
-      { mode: "Car", title: "Drive", duration: "Check Maps", cost: "Fuel cost" }
-    ];
-  }
+async function callGeminiText(tripData) {
+  const model = genAI.getGenerativeModel({ model: BACKUP_MODEL });
+  const prompt = `Create a JSON itinerary for ${tripData.destination}. Return ONLY valid JSON.`;
+  const result = await model.generateContent(prompt);
+  const text = result.response.text().replace(/```json|```/g, "").trim();
+  return JSON.parse(text);
 }
 
-// --- 2. ITINERARY GENERATOR ---
-export async function generateItinerary(destination, duration, budget, interests) {
-  const safeDuration = parseInt(duration) || 3;
-  
-  const prompt = `
-    Create a ${safeDuration}-day travel itinerary for ${destination}.
-    Budget: ${budget}. Interests: ${interests}.
-    
-    Return ONLY a valid JSON array in this format:
-    [
-      { 
-        "day": 1, 
-        "theme": "Arrival & City Highlights", 
-        "activities": ["Activity 1", "Activity 2", "Activity 3"] 
-      },
-      { 
-        "day": 2, 
-        "theme": "Culture & History", 
-        "activities": ["Activity A", "Activity B"] 
-      }
-    ]
-    Do not wrap in markdown code blocks. Just raw JSON.
-  `;
-
-  try {
-    const text = await callGroq(prompt);
-    const data = parseJSON(text);
-    
-    if (Array.isArray(data) && data.length > 0) return data;
-    throw new Error("Invalid format");
-    
-  } catch (e) {
-    console.warn("AI Itinerary failed, using fallback");
-    return generateFallbackItinerary(destination, safeDuration);
-  }
+async function callGeminiVision(tripData, file) {
+  const model = genAI.getGenerativeModel({ model: BACKUP_MODEL });
+  const imagePart = await fileToGenerativePart(file);
+  const prompt = `Plan a trip to ${tripData.destination} based on this image. Return valid JSON.`;
+  const result = await model.generateContent([prompt, imagePart]);
+  const text = result.response.text().replace(/```json|```/g, "").trim();
+  return JSON.parse(text);
 }
 
-// --- HELPERS ---
-
-// Robust JSON parser to handle AI output quirks
-function parseJSON(text) {
-  try {
-    // Remove markdown code blocks if present (```json ... ```)
-    const cleanText = text.replace(/```json/g, '').replace(/```/g, '').trim();
-    return JSON.parse(cleanText);
-  } catch (e) {
-    return null;
-  }
-}
-
-function generateFallbackItinerary(destination, duration) {
-  return Array.from({ length: duration }, (_, i) => ({
-    day: i + 1,
-    theme: `Explore ${destination}`,
-    activities: [
-      `Visit top landmarks in ${destination}`,
-      `Enjoy local cuisine for lunch`,
-      `Evening walk in the city center`
-    ]
-  }));
+async function fileToGenerativePart(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve({
+      inlineData: { data: reader.result.split(',')[1], mimeType: file.type }
+    });
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
 }

@@ -1,6 +1,7 @@
-import { useState } from 'react';
-import { Calendar, Wallet, Search, Sparkles, PenTool } from 'lucide-react';
-import CityAutocomplete from './CityAutocomplete';
+import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { generateItinerary } from '../services/api';
+import { MapPin, Calendar, Users, DollarSign, Loader2, Plane } from 'lucide-react';
 
 const SearchForm = ({ onSearch }) => {
   const [tripType, setTripType] = useState('round');
