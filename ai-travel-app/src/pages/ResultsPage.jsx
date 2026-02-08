@@ -1,225 +1,276 @@
-import React, { useEffect, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
-import ItineraryTimeline from '../components/ItineraryTimeline';
-import TripResult from '../components/TripResult';
-import { Plane, Loader2, Map as MapIcon, ShoppingBag } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { motion } from 'framer-motion';
+import { ArrowLeft, Plane, Hotel, MapPin, Calendar, Cloud, Loader2, DollarSign, Sun } from 'lucide-react';
 
-const ResultsPage = () => {
-  const { state } = useLocation();
-  const navigate = useNavigate();
-  
-  // Data States
+import { getWeather } from '../services/weatherService';
+import { fetchFlights, fetchHotels } from '../services/amadeusAPI';
+// Removed getTransportOptions import
+
+import ItineraryTimeline from '../components/ItineraryTimeline';
+import DestinationBackground from '../components/DestinationBackground';
+// Removed TransportModes import
+
+const ResultsPage = ({ searchData, onBack }) => {
+  const [weather, setWeather] = useState(null);
   const [flights, setFlights] = useState([]);
-  const [itinerary, setItinerary] = useState(null);
-  const [packingList, setPackingList] = useState(null);
-  const [bgImage, setBgImage] = useState(null); // 🆕 State for background image
-  
-  // UI States
+  const [hotels, setHotels] = useState([]);
+  // Removed transport state
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState('itinerary');
 
   useEffect(() => {
-    if (!state) {
-      navigate('/');
-      return;
-    }
+    if (!searchData) return;
 
-    const loadData = async () => {
+    const loadAllData = async () => {
+      setLoading(true);
       try {
-        console.log("🔄 Fetching Trip Data for:", state.destinationName);
+        const destination = searchData.toCity || searchData.destinationName;
         
-        // 🆕 1. Fetch Background Image (Fire and forget, don't block loading)
-        fetch(`http://localhost:5000/api/destination-image?query=${state.destinationName}`)
-          .then(res => res.json())
-          .then(data => {
-             if (data.url) setBgImage(data.url);
-          })
-          .catch(err => console.warn("🖼️ Image fetch failed", err));
+        // 1. Fetch Flights
+        const flightResults = await fetchFlights(
+          searchData.fromCity,
+          destination,
+          searchData.departureDate,
+          searchData.returnDate
+        );
+        setFlights(flightResults);
 
-        // 2. Fetch Itinerary
-        const itinRes = await fetch('http://localhost:5000/api/itinerary', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ 
-            destination: state.destinationName,
-            interests: state.interests,
-            customInterest: state.customInterest
-          })
-        });
-        const itinData = await itinRes.json();
-        setItinerary(itinData);
+        // 2. Fetch Weather & Hotels
+        const [weatherData, hotelResults] = await Promise.all([
+          getWeather(destination),
+          fetchHotels(destination)
+        ]);
 
-        // 3. Fetch Packing List
-        const packRes = await fetch('http://localhost:5000/api/packing', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ 
-            destination: state.destinationName,
-            interests: state.interests,
-            customInterest: state.customInterest
-          })
-        });
-        const packData = await packRes.json();
-        setPackingList(packData);
+        setWeather(weatherData);
+        setHotels(hotelResults);
 
-        // 4. Fetch Flights (Optional)
-        fetch(`http://localhost:5000/api/flights?origin=${state.fromCity}&destination=${state.toCity}&date=${state.departureDate}`)
-          .then(res => res.json())
-          .then(data => setFlights(data))
-          .catch(err => console.warn("✈️ Flight fetch failed", err));
-
-      } catch (error) {
-        console.error("❌ Error loading trip data:", error);
+      } catch (err) {
+        console.error("Data Fetch Error:", err);
       } finally {
         setLoading(false);
       }
     };
 
-    loadData();
-  }, [state, navigate]);
+    loadAllData();
+  }, [searchData]);
 
-  if (!state) return null;
+  const formatTime = (isoString) => {
+    if (!isoString) return "--:--";
+    return new Date(isoString).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  };
 
-  // 🆕 Dynamic Background Style
-  const mainContainerStyle = bgImage ? {
-    backgroundImage: `linear-gradient(to bottom, rgba(2, 6, 23, 0.85), rgba(2, 6, 23, 0.95)), url(${bgImage})`,
-    backgroundSize: 'cover',
-    backgroundPosition: 'center',
-    backgroundAttachment: 'fixed', // Creates a cool parallax effect
-  } : { backgroundColor: '#020617' }; // Fallback dark color
+  const formatDuration = (duration) => {
+    if (!duration) return "";
+    return duration.replace("PT", "").replace("H", "h ").replace("M", "m");
+  };
 
-  return (
-    // Apply the style here
-    <div style={mainContainerStyle} className="min-h-screen text-white font-sans selection:bg-blue-500/30 transition-all duration-1000 ease-in-out">
-      
-      {/* HEADER */}
-      <div className="border-b border-white/10 sticky top-0 z-50 backdrop-blur-xl bg-slate-900/50">
-        <div className="max-w-6xl mx-auto px-6 py-4 flex justify-between items-center">
-          <div>
-            <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent shadow-sm">
-              Trip to {state.destinationName}
-            </h1>
-            <p className="text-sm text-gray-300 flex items-center gap-2 font-medium">
-              {state.fromCity} ➝ {state.toCity} • {state.departureDate}
-            </p>
-          </div>
-          <button 
-            onClick={() => navigate('/')} 
-            className="text-sm bg-white/10 hover:bg-white/20 px-4 py-2 rounded-full transition font-bold backdrop-blur-md"
-          >
-            New Search
+  if (!searchData) {
+    return (
+      <div className="min-h-screen flex items-center justify-center text-white bg-black">
+        <div className="text-center">
+          <h2 className="text-2xl font-bold mb-4">No search data</h2>
+          <button onClick={onBack} className="bg-blue-600 px-6 py-2 rounded-lg">
+            Go Back
           </button>
         </div>
       </div>
+    );
+  }
 
-      <div className="max-w-6xl mx-auto px-6 py-8">
-        
-        {/* LOADING STATE */}
-        {loading ? (
-          <div className="flex flex-col items-center justify-center h-[60vh] space-y-4">
-            <Loader2 size={48} className="text-blue-500 animate-spin" />
-            <p className="text-lg text-gray-200 font-bold animate-pulse">Building your perfect itinerary...</p>
-            <p className="text-sm text-gray-400">Checking flights • Curating spots • Packing bags</p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 animate-fade-in-up">
-            
-            {/* LEFT SIDEBAR */}
-            <div className="lg:col-span-1 space-y-6">
-              <div className="bg-white/5 backdrop-blur-md border border-white/10 rounded-2xl p-2 flex flex-col gap-1 shadow-xl">
-                <button 
-                  onClick={() => setActiveTab('itinerary')}
-                  className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-bold ${activeTab === 'itinerary' ? 'bg-blue-600 text-white shadow-lg' : 'hover:bg-white/5 text-gray-300'}`}
-                >
-                  <MapIcon size={20} /> Day Plan
-                </button>
-                <button 
-                  onClick={() => setActiveTab('packing')}
-                  className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-bold ${activeTab === 'packing' ? 'bg-green-600 text-white shadow-lg' : 'hover:bg-white/5 text-gray-300'}`}
-                >
-                  <ShoppingBag size={20} /> Packing List
-                </button>
-                <button 
-                  onClick={() => setActiveTab('flights')}
-                  className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-bold ${activeTab === 'flights' ? 'bg-purple-600 text-white shadow-lg' : 'hover:bg-white/5 text-gray-300'}`}
-                >
-                  <Plane size={20} /> Flights ({flights.length})
-                </button>
-              </div>
+  const destination = searchData.toCity || searchData.destinationName;
 
-              {/* Budget Summary Card */}
-              <div className="bg-white/5 backdrop-blur-md border border-white/10 p-6 rounded-2xl shadow-xl">
-                <h3 className="text-blue-300 text-xs font-black uppercase tracking-wider mb-2">Estimated Budget</h3>
-                <div className="text-4xl font-black text-white">{state.currency} {state.budget}</div>
-                <div className="mt-4 flex gap-2 flex-wrap">
-                  {state.interests.map((tag, i) => (
-                    <span key={i} className="text-xs bg-white/20 px-2 py-1 rounded-md text-gray-100 font-medium">{tag}</span>
-                  ))}
+  return (
+    <DestinationBackground destination={destination}>
+      
+      {loading ? (
+        <div className="min-h-screen flex flex-col items-center justify-center text-white">
+          <Loader2 size={48} className="animate-spin text-blue-500 mb-4" />
+          <h2 className="text-2xl font-bold">Discovering {destination}...</h2>
+          <p className="text-gray-400 mt-2">Loading flights, hotels & experiences</p>
+        </div>
+      ) : (
+        <div className="min-h-screen p-6 md:p-10">
+          
+          {/* Header */}
+          <div className="max-w-6xl mx-auto mb-8">
+            <button 
+              onClick={onBack}
+              className="flex items-center gap-2 text-gray-400 hover:text-white mb-6 transition-colors"
+            >
+              <ArrowLeft size={20} /> Back to Search
+            </button>
+
+            <div className="flex flex-wrap items-end justify-between gap-6">
+              <div>
+                <h1 className="text-5xl md:text-7xl font-black uppercase tracking-tight mb-3 text-white drop-shadow-lg">
+                  {destination}
+                </h1>
+                <div className="flex items-center gap-3 text-gray-300">
+                  <span className="flex items-center gap-1 bg-white/10 backdrop-blur px-4 py-2 rounded-full text-sm">
+                    <Calendar size={16} /> {searchData.departureDate}
+                    {searchData.returnDate && ` - ${searchData.returnDate}`}
+                  </span>
+                  <span className="flex items-center gap-1 bg-white/10 backdrop-blur px-4 py-2 rounded-full text-sm">
+                    <DollarSign size={16} /> {searchData.budget}
+                  </span>
                 </div>
               </div>
+
+              {/* Weather Widget */}
+              {weather && (
+                <div className="bg-white/10 backdrop-blur-md p-4 rounded-2xl border border-white/20 flex items-center gap-4">
+                  <Sun size={40} className="text-yellow-400" />
+                  <div>
+                    <p className="text-3xl font-bold">{weather.temp}°C</p>
+                    <p className="text-sm text-gray-300">{weather.condition}</p>
+                  </div>
+                </div>
+              )}
             </div>
+          </div>
 
-            {/* MAIN CONTENT AREA */}
-            <div className="lg:col-span-2">
+          <div className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-8">
+            
+            {/* Left Column - Flights & Hotels */}
+            <div className="lg:col-span-2 space-y-8">
               
-              {/* 🗺️ ITINERARY TAB */}
-              {activeTab === 'itinerary' && (
-                <div className="animate-fade-in">
-                  <h2 className="text-2xl font-bold mb-6 flex items-center gap-2 drop-shadow-md">
-                    <MapIcon className="text-blue-400"/> Your Itinerary
-                  </h2>
-                  {itinerary ? (
-                    <ItineraryTimeline itinerary={itinerary} />
-                  ) : (
-                    <div className="text-gray-400 text-center py-10">No itinerary generated.</div>
-                  )}
-                </div>
-              )}
-
-              {/* 🎒 PACKING TAB */}
-              {activeTab === 'packing' && (
-                <div className="animate-fade-in">
-                  <h2 className="text-2xl font-bold mb-6 flex items-center gap-2 drop-shadow-md">
-                    <ShoppingBag className="text-green-400"/> Smart Packing
-                  </h2>
-                  <TripResult packingList={packingList} destination={state.destinationName} />
-                </div>
-              )}
-
-              {/* ✈️ FLIGHTS TAB */}
-              {activeTab === 'flights' && (
-                <div className="animate-fade-in space-y-4">
-                  <h2 className="text-2xl font-bold mb-6 flex items-center gap-2 drop-shadow-md">
-                    <Plane className="text-purple-400"/> Available Flights
-                  </h2>
+              {/* Flights Section */}
+              <section>
+                <h2 className="text-xl font-bold mb-4 flex items-center gap-2 text-gray-200">
+                  <Plane className="text-blue-400" /> Best Flights
+                </h2>
+                
+                <div className="space-y-4">
                   {flights.length > 0 ? (
-                    flights.map((flight, i) => (
-                      <div key={i} className="bg-white/10 backdrop-blur-md border border-white/10 p-4 rounded-xl flex justify-between items-center hover:bg-white/20 transition shadow-lg">
-                        <div className="flex items-center gap-4">
-                          <img src={flight.airlineLogo} alt="logo" className="w-10 h-10 rounded-full bg-white p-1" />
-                          <div>
-                            <div className="font-bold text-lg text-white">{flight.price.total} {flight.price.currency}</div>
-                            <div className="text-sm text-gray-300">{flight.itineraries[0].duration.replace('PT', '').toLowerCase()}</div>
+                    flights.slice(0, 3).map((flight) => {
+                      const outbound = flight.itineraries?.[0];
+                      const segments = outbound?.segments || [];
+                      const firstSeg = segments[0];
+                      const lastSeg = segments[segments.length - 1];
+                      const airline = flight.validatingAirlineCodes?.[0] || "Unknown";
+
+                      return (
+                        <motion.div 
+                          key={flight.id}
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          className="bg-black/40 backdrop-blur-md border border-white/10 p-5 rounded-2xl hover:bg-black/50 transition-all"
+                        >
+                          <div className="flex items-center justify-between flex-wrap gap-4">
+                            
+                            <div className="flex items-center gap-3">
+                              <div className="w-12 h-12 bg-white rounded-full flex items-center justify-center">
+                                <span className="text-black font-bold text-xs">{airline}</span>
+                              </div>
+                              <div>
+                                <p className="font-bold text-white">{airline}</p>
+                                <p className="text-xs text-gray-400">{formatDuration(outbound?.duration)}</p>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-4 text-center">
+                              <div>
+                                <p className="text-2xl font-bold text-white">{firstSeg?.departure?.iataCode}</p>
+                                <p className="text-xs text-gray-400">{formatTime(firstSeg?.departure?.at)}</p>
+                              </div>
+                              
+                              <div className="flex flex-col items-center w-20">
+                                <Plane size={16} className="text-blue-400 rotate-90" />
+                                <div className="w-full h-px bg-gray-600 my-1"></div>
+                              </div>
+
+                              <div>
+                                <p className="text-2xl font-bold text-white">{lastSeg?.arrival?.iataCode}</p>
+                                <p className="text-xs text-gray-400">{formatTime(lastSeg?.arrival?.at)}</p>
+                              </div>
+                            </div>
+
+                            <div className="text-right">
+                              <p className="text-2xl font-bold text-emerald-400">
+                                ${flight.price?.total}
+                              </p>
+                              <button className="mt-2 bg-blue-600 hover:bg-blue-700 text-white text-sm px-4 py-2 rounded-full transition-colors">
+                                Select
+                              </button>
+                            </div>
                           </div>
-                        </div>
-                        <button className="bg-white text-black px-4 py-2 rounded-lg font-bold text-sm hover:bg-blue-50 transition">
-                          Select
-                        </button>
-                      </div>
-                    ))
+                        </motion.div>
+                      );
+                    })
                   ) : (
-                    <div className="text-gray-400 text-center py-10 bg-white/5 rounded-xl border border-white/10 border-dashed backdrop-blur-sm">
-                      No flights found for these dates.
+                    <div className="bg-black/30 border border-white/10 p-8 rounded-2xl text-center text-gray-400">
+                      <Plane size={48} className="mx-auto mb-4 opacity-30" />
+                      <p>No direct flights found via Amadeus.</p>
                     </div>
                   )}
                 </div>
-              )}
+              </section>
 
+              {/* Hotels Section */}
+              <section>
+                <h2 className="text-xl font-bold mb-4 flex items-center gap-2 text-gray-200">
+                  <Hotel className="text-purple-400" /> Where to Stay
+                </h2>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {hotels.length > 0 ? (
+                    hotels.map((hotel) => (
+                      <motion.div 
+                        key={hotel.id}
+                        initial={{ opacity: 0, scale: 0.95 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        className="bg-black/40 backdrop-blur-md border border-white/10 rounded-2xl overflow-hidden hover:border-purple-500/30 transition-all group"
+                      >
+                        <div className="h-40 overflow-hidden relative">
+                          <img 
+                            src={hotel.image} 
+                            alt={hotel.name} 
+                            className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
+                          />
+                          <div className="absolute top-3 right-3 bg-black/60 backdrop-blur px-3 py-1 rounded-full text-yellow-400 text-sm font-bold">
+                            ★ {hotel.rating}
+                          </div>
+                        </div>
+                        
+                        <div className="p-4">
+                          <h3 className="font-bold text-lg text-white mb-1 truncate">{hotel.name}</h3>
+                          <p className="text-sm text-gray-400 flex items-center gap-1 mb-3">
+                            <MapPin size={14} /> City Center
+                          </p>
+                          <div className="flex items-center justify-between">
+                            <span className="text-emerald-400 font-bold">
+                              {hotel.price}
+                            </span>
+                            <button className="bg-purple-600/20 hover:bg-purple-600/40 text-purple-300 text-sm px-4 py-2 rounded-lg transition-colors">
+                              View Deal
+                            </button>
+                          </div>
+                        </div>
+                      </motion.div>
+                    ))
+                  ) : (
+                    <div className="col-span-2 bg-black/30 border border-white/10 p-8 rounded-2xl text-center text-gray-400">
+                      <Hotel size={48} className="mx-auto mb-4 opacity-30" />
+                      <p>No hotels found.</p>
+                    </div>
+                  )}
+                </div>
+              </section>
             </div>
+
+            {/* Right Column - Itinerary */}
+            <div>
+              <ItineraryTimeline 
+                destination={destination}
+                days={3} 
+                budget={searchData.budget} 
+                interests={searchData.interests}
+              />
+            </div>
+
           </div>
-        )}
-      </div>
-    </div>
+        </div>
+      )}
+    </DestinationBackground>
   );
 };
 

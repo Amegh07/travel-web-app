@@ -1,19 +1,43 @@
+// ai-travel-app/src/services/amadeusAPI.js
+import { apiCache } from '../utils/apiCache';
+
 const CLIENT_ID = import.meta.env.VITE_AMADEUS_CLIENT_ID;
 const CLIENT_SECRET = import.meta.env.VITE_AMADEUS_CLIENT_SECRET;
 
 let token = null;
 let tokenExpiry = 0;
+let lastRequestTime = 0;
+const MIN_REQUEST_INTERVAL = 200; // 200ms between requests
+
+// Rate limiter
+const rateLimiter = async () => {
+  const now = Date.now();
+  const timeSinceLastRequest = now - lastRequestTime;
+  
+  if (timeSinceLastRequest < MIN_REQUEST_INTERVAL) {
+    const waitTime = MIN_REQUEST_INTERVAL - timeSinceLastRequest;
+    await new Promise(resolve => setTimeout(resolve, waitTime));
+  }
+  
+  lastRequestTime = Date.now();
+};
 
 const getAmadeusToken = async () => {
   if (token && Date.now() < tokenExpiry) return token;
+  
   try {
+    await rateLimiter();
     const response = await fetch("https://test.api.amadeus.com/v1/security/oauth2/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: `grant_type=client_credentials&client_id=${CLIENT_ID}&client_secret=${CLIENT_SECRET}`,
     });
+    
+    if (!response.ok) throw new Error(`Token error: ${response.status}`);
+    
     const data = await response.json();
-    if (!data.access_token) return null;
+    if (!data.access_token) throw new Error("No access token");
+    
     token = data.access_token;
     tokenExpiry = Date.now() + (data.expires_in * 1000);
     return token;
@@ -23,143 +47,182 @@ const getAmadeusToken = async () => {
   }
 };
 
-// --- CITY SEARCH ---
+// City code mapping for common cities
+const CITY_CODE_MAP = {
+  "paris": "CDG", "london": "LHR", "new york": "JFK", "dubai": "DXB",
+  "delhi": "DEL", "mumbai": "BOM", "bangalore": "BLR", "singapore": "SIN",
+  "tokyo": "HND", "bangkok": "BKK", "sydney": "SYD", "los angeles": "LAX",
+  "san francisco": "SFO", "toronto": "YYZ", "vancouver": "YVR",
+  "barcelona": "BCN", "madrid": "MAD", "rome": "FCO", "milan": "MXP",
+  "amsterdam": "AMS", "berlin": "BER", "munich": "MUC", "istanbul": "IST",
+  "hong kong": "HKG", "kuala lumpur": "KUL", "seoul": "ICN",
+  "kochi": "COK", "chennai": "MAA", "hyderabad": "HYD", "goa": "GOI"
+};
+
+const getCityCode = (input) => {
+  if (!input) return null;
+  
+  // Extract IATA code if present: "Paris (CDG)" -> "CDG"
+  const match = input.match(/\(([A-Z]{3})\)/);
+  if (match) return match[1];
+  
+  // Direct 3-letter code
+  if (/^[A-Z]{3}$/.test(input)) return input;
+  
+  // Check city name map
+  const normalized = input.toLowerCase().trim();
+  return CITY_CODE_MAP[normalized] || null;
+};
+
 export const searchCities = async (keyword) => {
   if (!keyword || keyword.length < 2) return [];
+  
+  // Check cache first
+  const cached = apiCache.get('searchCities', { keyword });
+  if (cached) return cached;
+
   try {
     const authToken = await getAmadeusToken();
     if (!authToken) return [];
 
+    await rateLimiter();
     const response = await fetch(
-      `https://test.api.amadeus.com/v1/reference-data/locations?subType=CITY,AIRPORT&keyword=${keyword}&page[limit]=10`,
+      `https://test.api.amadeus.com/v1/reference-data/locations?subType=CITY,AIRPORT&keyword=${encodeURIComponent(keyword)}&page[limit]=5`,
       { headers: { Authorization: `Bearer ${authToken}` } }
     );
-    if (!response.ok) return [];
+    
+    if (response.status === 429) {
+      console.warn("Rate limited - using local mapping");
+      const code = getCityCode(keyword);
+      return code ? [{ name: keyword, iataCode: code, country: "" }] : [];
+    }
+    
+    if (!response.ok) throw new Error(`Search error: ${response.status}`);
+    
     const data = await response.json();
-    return (data.data || []).map(place => ({
+    const results = (data.data || []).map(place => ({
       name: place.name,
       iataCode: place.iataCode,
-      geoCode: place.geoCode, 
+      geoCode: place.geoCode,
       city: place.address?.cityName || place.name,
-      country: place.address?.countryName || "" 
+      country: place.address?.countryName || ""
     }));
+    
+    // Cache results
+    apiCache.set('searchCities', { keyword }, results);
+    return results;
+    
   } catch (error) {
-    return [];
+    console.error("Search Cities Error:", error);
+    // Fallback to local mapping
+    const code = getCityCode(keyword);
+    return code ? [{ name: keyword, iataCode: code, country: "" }] : [];
   }
 };
 
-// --- RESOLVER ---
-const SAFETY_AIRPORT_MAP = {
-  "LON": "LHR", "NYC": "JFK", "PAR": "CDG", "TYO": "HND",
-  "BKK": "BKK", "IST": "IST", "DXB": "DXB", "BOM": "BOM",
-  "DEL": "DEL", "BLR": "BLR", "SYD": "SYD", "COK": "COK"
-};
-
-const resolveLocationDetails = async (input, authToken) => {
-  let code = "XXX";
-  const match = input.match(/\(([A-Z]{3})\)/);
-  if (match) code = match[1];
-  else if (/^[A-Z]{3}$/.test(input)) code = input;
-
-  let geoCode = null;
-  try {
-    // Attempt API lookup to get coordinates
-    const response = await fetch(
-      `https://test.api.amadeus.com/v1/reference-data/locations?subType=CITY,AIRPORT&keyword=${code}&page[limit]=1`,
-      { headers: { Authorization: `Bearer ${authToken}` } }
-    );
-    if (response.ok) {
-        const data = await response.json();
-        const loc = data.data?.[0];
-        if (loc) {
-            code = loc.iataCode;
-            geoCode = loc.geoCode;
-        }
-    }
-  } catch (e) { /* ignore */ }
-
-  const finalCode = SAFETY_AIRPORT_MAP[code] || code;
-  return { code: finalCode, geoCode };
-};
-
-// --- FLIGHT SEARCH (Now Supports Return Date) ---
 export const fetchFlights = async (fromCity, toCity, date, returnDate = null) => {
+  // Get codes from cache or mapping
+  const fromCode = getCityCode(fromCity) || fromCity;
+  const toCode = getCityCode(toCity) || toCity;
+  
+  if (!fromCode || !toCode) {
+    console.error("Invalid city codes:", fromCity, toCity);
+    return [];
+  }
+
+  // Check cache
+  const cacheKey = { fromCode, toCode, date, returnDate };
+  const cached = apiCache.get('flights', cacheKey);
+  if (cached) return cached;
+
   try {
     const authToken = await getAmadeusToken();
     if (!authToken) return [];
-    
-    const origin = await resolveLocationDetails(fromCity, authToken);
-    const dest = await resolveLocationDetails(toCity, authToken);
-    
-    if (origin.code === "XXX" || dest.code === "XXX") return [];
 
-    console.log(`✈️ Searching: ${origin.code} -> ${dest.code} (Return: ${returnDate})`);
-
-    let url = `https://test.api.amadeus.com/v2/shopping/flight-offers?originLocationCode=${origin.code}&destinationLocationCode=${dest.code}&departureDate=${date}&adults=1&max=5`;
+    let url = `https://test.api.amadeus.com/v2/shopping/flight-offers?originLocationCode=${fromCode}&destinationLocationCode=${toCode}&departureDate=${date}&adults=1&max=10&currencyCode=USD`;
     
-    // Add return date if provided
     if (returnDate) {
-        url += `&returnDate=${returnDate}`;
+      url += `&returnDate=${returnDate}`;
     }
 
-    const response = await fetch(url, { headers: { Authorization: `Bearer ${authToken}` } });
+    await rateLimiter();
+    const response = await fetch(url, { 
+      headers: { Authorization: `Bearer ${authToken}` } 
+    });
+
+    if (response.status === 429) {
+      console.warn("Rate limited - please wait");
+      return [];
+    }
 
     if (!response.ok) {
-        console.warn(`Flight API Error: ${response.status}`);
-        return [];
+      console.warn(`Flight API Error: ${response.status}`);
+      return [];
     }
 
     const data = await response.json();
-    return data.data || [];
+    const flights = data.data || [];
+    
+    // Cache results
+    apiCache.set('flights', cacheKey, flights);
+    return flights;
+    
   } catch (error) {
+    console.error("Fetch Flights Error:", error);
     return [];
   }
 };
 
-// --- HOTEL SEARCH ---
 export const fetchHotels = async (cityInput) => {
-    try {
-        const authToken = await getAmadeusToken();
-        if (!authToken) return [];
-        
-        const location = await resolveLocationDetails(cityInput, authToken);
-        
-        if (location.geoCode) {
-            const response = await fetch(
-                `https://test.api.amadeus.com/v1/reference-data/locations/hotels/by-geocode?latitude=${location.geoCode.latitude}&longitude=${location.geoCode.longitude}&radius=10&radiusUnit=KM&hotelSource=ALL`,
-                { headers: { Authorization: `Bearer ${authToken}` } }
-            );
-            if (response.ok) {
-                const data = await response.json();
-                if (data.data && data.data.length > 0) return mapHotelData(data.data);
-            }
-        }
-        
-        // Fallback to city code
-        if (location.code !== "XXX") {
-            const response = await fetch(
-                `https://test.api.amadeus.com/v1/reference-data/locations/hotels/by-city?cityCode=${location.code}&radius=5&radiusUnit=KM&hotelSource=ALL`,
-                { headers: { Authorization: `Bearer ${authToken}` } }
-            );
-            if (response.ok) {
-                const data = await response.json();
-                return mapHotelData(data.data || []);
-            }
-        }
-        return [];
-    } catch (error) {
-        return [];
-    }
-};
+  const cityCode = getCityCode(cityInput) || cityInput;
+  
+  if (!cityCode || cityCode.length !== 3) {
+    console.error("Invalid city code for hotels:", cityInput);
+    return [];
+  }
 
-const mapHotelData = (hotels) => {
-    return hotels.slice(0, 6).map((hotel) => ({
-        id: hotel.hotelId,
-        name: hotel.name,
-        image: `https://placehold.co/600x400?text=${encodeURIComponent(hotel.name)}`,
-        rating: "4.0", 
-        price: "View Rates", 
-        currency: "",
-        amenities: ["WiFi", "AC", "24h Front Desk"]
+  // Check cache
+  const cached = apiCache.get('hotels', { cityCode });
+  if (cached) return cached;
+
+  try {
+    const authToken = await getAmadeusToken();
+    if (!authToken) return [];
+
+    // Use city code search (more reliable than geocode)
+    await rateLimiter();
+    const response = await fetch(
+      `https://test.api.amadeus.com/v1/reference-data/locations/hotels/by-city?cityCode=${cityCode}&radius=10&radiusUnit=KM&hotelSource=ALL`,
+      { headers: { Authorization: `Bearer ${authToken}` } }
+    );
+
+    if (response.status === 429) {
+      console.warn("Rate limited - please wait");
+      return [];
+    }
+
+    if (!response.ok) {
+      console.warn(`Hotel API Error: ${response.status}`);
+      return [];
+    }
+
+    const data = await response.json();
+    const hotels = (data.data || []).slice(0, 6).map(hotel => ({
+      id: hotel.hotelId,
+      name: hotel.name,
+      image: `https://source.unsplash.com/600x400/?hotel,${encodeURIComponent(hotel.name.split(' ')[0])}`,
+      rating: (Math.random() * 2 + 3).toFixed(1), // Real ratings not in API
+      price: "Check Rates",
+      currency: "USD",
+      amenities: ["WiFi", "AC", "24h Front Desk"]
     }));
+    
+    // Cache results
+    apiCache.set('hotels', { cityCode }, hotels);
+    return hotels;
+    
+  } catch (error) {
+    console.error("Fetch Hotels Error:", error);
+    return [];
+  }
 };
