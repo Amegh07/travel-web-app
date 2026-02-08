@@ -1,17 +1,16 @@
-/* -------------------------------------------------------------------------- */
-/* server/index.js (FINAL MASTER: HYBRID AI + AMADEUS + UNSPLASH)             */
-/* -------------------------------------------------------------------------- */
+/* server/index.js */
 import express from 'express';
 import cors from 'cors';
 import Amadeus from 'amadeus';
-// Note: Native fetch is used (Node 18+)
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
+// CONFIGURATION
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 dotenv.config({ path: path.join(__dirname, '.env') });
+// Fallback: try loading from root if not found in server/
 dotenv.config({ path: path.join(__dirname, '../.env') });
 
 const app = express();
@@ -22,228 +21,193 @@ app.use(express.json());
 
 // --- STARTUP CHECK ---
 console.log("\n==================================================");
-console.log("🚀 STARTING BACKEND (MASTER VERSION)");
-console.log(`✈️ AMADEUS:     ${process.env.AMADEUS_CLIENT_ID ? "OK ✅" : "MISSING ❌"}`);
+console.log("🚀 STARTING BACKEND (HYBRID ENGINE)");
 console.log(`🤖 GEMINI KEY:  ${process.env.GEMINI_API_KEY ? "OK ✅" : "MISSING ❌"}`);
 console.log(`⚡ GROQ KEY:    ${process.env.GROQ_API_KEY ? "OK ✅" : "MISSING ❌"}`);
-console.log(`🖼️ UNSPLASH:    ${process.env.UNSPLASH_ACCESS_KEY ? "OK ✅" : "MISSING ❌"}`);
+console.log(`✈️ AMADEUS:     ${process.env.AMADEUS_CLIENT_ID ? "OK ✅" : "MISSING ❌"}`);
 console.log("==================================================\n");
 
+// --- AMADEUS SETUP ---
 const amadeus = new Amadeus({
   clientId: process.env.AMADEUS_CLIENT_ID,
   clientSecret: process.env.AMADEUS_CLIENT_SECRET
 });
 
-// ==========================================================================
-// 1. CITY SEARCH ROUTE
-// ==========================================================================
-const cityCache = new Map();
-
-app.get('/api/city-search', async (req, res) => {
-  const { keyword } = req.query;
-  if (!keyword || keyword.length < 2) return res.json([]);
-  
-  const cacheKey = keyword.toLowerCase().trim();
-  
-  if (cityCache.has(cacheKey)) {
-    console.log(`⚡ CACHE HIT: "${keyword}"`);
-    return res.json(cityCache.get(cacheKey));
-  }
-
-  console.log(`🔎 ASKING AMADEUS: "${keyword}"...`);
-
-  try {
-    const response = await amadeus.referenceData.locations.get({ 
-      keyword, 
-      subType: 'CITY,AIRPORT' 
-    });
-
-    const results = (response.data || []).map((loc) => ({
-      name: loc.name,
-      iataCode: loc.iataCode,
-      city: loc.address?.cityName || loc.name,
-      countryCode: loc.address?.countryCode || '',
-      country: loc.address?.countryName || loc.address?.countryCode || ''
-    }));
-
-    console.log(`✅ AMADEUS FOUND: ${results.length} locations`);
-    cityCache.set(cacheKey, results);
-    res.json(results);
-
-  } catch (err) {
-    console.error(`❌ AMADEUS FAILED for "${keyword}": ${err.message}`);
-    res.json([]);
-  }
-});
-
-// ==========================================================================
-// 2. HYBRID AI ENGINE (RICH DATA SUPPORT)
-// ==========================================================================
+// --- HELPER: AI CALLER ---
 function parseAIResponse(text) {
   try {
+    // 1. Try direct parse
     return JSON.parse(text);
   } catch (e) {
-    // Attempt to strip markdown code blocks
+    // 2. Try stripping Markdown code blocks
     const match = text.match(/```json([\s\S]*?)```/);
     if (match) { try { return JSON.parse(match[1]); } catch (err) {} }
-    // Attempt to find raw JSON object/array
+    
+    // 3. Try finding the first '{' or '['
     const jsonMatch = text.match(/(\{[\s\S]*\}|\[[\s\S]*\])/);
     if (jsonMatch) { try { return JSON.parse(jsonMatch[0]); } catch (err) {} }
+    
     return null;
   }
 }
 
+// 1. Gemini (Primary)
 async function tryGemini(prompt) {
+  if (!process.env.GEMINI_API_KEY) return null;
   try {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY?.trim()}`;
-    const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }) });
-    
-    if (!response.ok) {
-      console.warn(`⚠️ GEMINI FAILED (${response.status}). Switching...`);
-      return null;
-    }
-    
-    const data = await response.json();
-    return parseAIResponse(data.candidates[0].content.parts[0].text);
-  } catch (e) { 
-    console.error("❌ GEMINI ERROR:", e.message);
-    return null; 
-  }
-}
-
-async function tryGroq(role, prompt) {
-  const apiKey = process.env.GROQ_API_KEY?.trim();
-  if (!apiKey) return null;
-  
-  const model = role === 'planner' ? 'llama-3.3-70b-versatile' : 'llama-3.1-8b-instant';
-  
-  console.log(`⚡ SWITCHING TO BACKUP: Groq (${model})...`);
-
-  // Rich Data System Instructions
-  const systemInstruction = role === 'planner'
-    ? `You are a travel planner. Return strictly valid JSON.
-       Output must be an ARRAY of objects.
-       Each object must have keys: "day" (number), "theme" (string), "activities" (array).
-       IMPORTANT: "activities" must be an array of OBJECTS.
-       Each activity object must have:
-       - "time" (string, e.g. "Morning", "10:00 AM")
-       - "description" (string, activity details)
-       - "location" (string, place name)`
-    : `You are a packing assistant. Return strictly valid JSON Object where keys are categories and values are arrays of strings.`;
-
-  try {
-    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-      method: "POST", headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ messages: [{ role: "system", content: systemInstruction }, { role: "user", content: prompt }], model, temperature: 0.2, response_format: { type: "json_object" } })
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
+    const response = await fetch(url, { 
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' }, 
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }) 
     });
     
     if (!response.ok) return null;
-    
     const data = await response.json();
-    console.log(`✅ SUCCESS with Groq!`);
-    return parseAIResponse(data.choices[0].message.content);
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    return text ? text.trim() : null;
   } catch (e) { 
-    console.error("❌ GROQ ERROR:", e.message);
+    console.error("Gemini Error:", e.message);
     return null; 
   }
 }
 
-async function callHybridAI(role, prompt) {
-  let result = await tryGemini(prompt);
-  if (result) return result;
-  
-  result = await tryGroq(role, prompt);
-  if (result) return result;
-  
-  // Emergency Fallback
-  const FALLBACK_DATA = {
-    itinerary: [
-      { day: 1, theme: "Arrival", activities: [{ time: "Evening", description: "Check in and relax", location: "City Center" }] },
-      { day: 2, theme: "Exploration", activities: [{ time: "Morning", description: "Visit main landmarks", location: "Downtown" }] }
-    ],
-    packing: { "Essentials": ["Passport", "Wallet"] }
-  };
-  return role === 'planner' ? FALLBACK_DATA.itinerary : FALLBACK_DATA.packing;
+// 2. Groq (Backup)
+async function tryGroq(prompt, jsonMode = true) {
+  if (!process.env.GROQ_API_KEY) return null;
+  try {
+    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST", 
+      headers: { 
+        "Authorization": `Bearer ${process.env.GROQ_API_KEY}`, 
+        "Content-Type": "application/json" 
+      },
+      body: JSON.stringify({ 
+        messages: [{ role: "user", content: prompt }], 
+        model: "llama-3.3-70b-versatile",
+        response_format: jsonMode ? { type: "json_object" } : undefined
+      })
+    });
+    
+    if (!response.ok) return null;
+    const data = await response.json();
+    return data.choices[0].message.content;
+  } catch (e) { 
+    console.error("Groq Error:", e.message);
+    return null; 
+  }
 }
 
-// ==========================================================================
-// 3. MAIN API ROUTES
-// ==========================================================================
-app.get('/api/flights', async (req, res) => {
-  const { origin, destination, date } = req.query;
+// 3. Hybrid Orchestrator
+async function callHybridAI(prompt, jsonMode = true) {
+    // A. Try Gemini First
+    console.log("🤖 Asking Gemini...");
+    let text = await tryGemini(prompt);
+    
+    // B. Fallback to Groq
+    if (!text) {
+        console.log("⚡ Gemini failed. Switching to Groq...");
+        text = await tryGroq(prompt, jsonMode);
+    }
+
+    // C. Validation
+    if (!text || text.length < 10) {
+        throw new Error("AI returned empty or invalid response");
+    }
+
+    return jsonMode ? parseAIResponse(text) : text;
+}
+
+
+// --- API ROUTES ---
+
+// 1. ITINERARY
+app.post('/api/itinerary', async (req, res) => {
+  const { destination, interests, customInterest, days, budget } = req.body;
+  
+  // Calculate duration logic if dates provided, else default to 3
+  const duration = days || 3;
+
+  const prompt = `Create a ${duration}-day itinerary for ${destination}. 
+  Budget: ${budget}. Interests: ${interests?.join(", ") || "General"}. 
+  User Request: ${customInterest || "None"}.
+  Return strictly valid JSON. Format: Array of objects [{ "day": 1, "theme": "...", "activities": [{ "time": "...", "description": "...", "location": "..." }] }]`;
+   
   try {
-    const r = await amadeus.shopping.flightOffersSearch.get({ originLocationCode: origin, destinationLocationCode: destination, departureDate: date, adults: '1', max: '10' });
-    const enhanced = r.data.map(f => ({ ...f, airlineLogo: `https://pics.avs.io/200/200/${f.itineraries[0].segments[0].carrierCode}.png`, airlineName: f.itineraries[0].segments[0].carrierCode }));
-    res.json(enhanced);
+      const data = await callHybridAI(prompt, true);
+      res.json(Array.isArray(data) ? data : (data?.itinerary || []));
+  } catch (e) {
+      console.error(e);
+      // Fallback data so UI doesn't crash
+      res.json([{ day: 1, theme: "Explore", activities: [{ time: "Morning", description: "Explore the city center", location: destination }] }]);
+  }
+});
+
+// 2. CHAT (New!)
+app.post('/api/chat', async (req, res) => {
+    const { message } = req.body;
+    const prompt = `You are a helpful travel assistant. Answer this briefly: ${message}`;
+    
+    try {
+        const reply = await callHybridAI(prompt, false); // false = plain text
+        res.json({ reply });
+    } catch (e) {
+        res.json({ reply: "I'm offline right now, but I can still help you plan trips!" });
+    }
+});
+
+// 3. FLIGHTS (Proxy to Amadeus)
+app.get('/api/flights', async (req, res) => {
+  try {
+    const { origin, destination, date } = req.query;
+    if (!origin || !destination || !date) return res.json([]);
+    
+    const r = await amadeus.shopping.flightOffersSearch.get({
+        originLocationCode: origin,
+        destinationLocationCode: destination,
+        departureDate: date,
+        adults: '1',
+        max: '5'
+    });
+    res.json(r.data);
   } catch (e) { res.json([]); }
 });
 
-app.post('/api/itinerary', async (req, res) => {
-  const { destination, interests, customInterest } = req.body;
-  const interestText = interests?.join(", ") || "general";
-  const customText = customInterest ? `User request: "${customInterest}".` : "";
-  
-  const prompt = `Create a 3-day itinerary for ${destination}. Interests: ${interestText}. ${customText}.
-    Return a JSON Array of days.
-    Each activity MUST be an object with {time, description, location}.`;
-    
-  const data = await callHybridAI('planner', prompt);
-  res.json(Array.isArray(data) ? data : (data?.itinerary || []));
+// 4. HOTELS (Proxy to Amadeus)
+app.get('/api/hotels', async (req, res) => {
+    try {
+        const { cityCode } = req.query;
+        // Basic hotel search
+        const r = await amadeus.referenceData.locations.hotels.byCity.get({ cityCode });
+        // Mocking images/price since Amadeus Test API data is limited
+        const hotels = r.data.slice(0, 6).map(h => ({
+            id: h.hotelId,
+            name: h.name,
+            price: "Check availability", 
+            image: "https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&w=800&q=80",
+            rating: (Math.random() * 1.5 + 3.5).toFixed(1) // Mock rating 3.5 - 5.0
+        }));
+        res.json(hotels);
+    } catch (e) { res.json([]); }
 });
 
+// 5. PACKING
 app.post('/api/packing', async (req, res) => {
-  const { destination, interests, customInterest } = req.body;
-  const customText = customInterest ? `User request: "${customInterest}".` : "";
-  const prompt = `Create packing list for ${destination}. Interests: ${interests?.join(", ")}. ${customText}. Return JSON Object.`;
-  const data = await callHybridAI('lister', prompt);
-  res.json(data);
+    const { destination, interests } = req.body;
+    const prompt = `Packing list for ${destination}. Interests: ${interests}. Return JSON object { "Essentials": [], "Clothes": [], "Tech": [] }`;
+    try {
+        const data = await callHybridAI(prompt, true);
+        res.json(data);
+    } catch (e) { res.json({}); }
 });
 
-// ==========================================================================
-// 4. EXTRA ROUTES (RATES, COUNTRY, EVENTS, HOTELS, IMAGE)
-// ==========================================================================
-app.get('/api/rates', async (req, res) => { try { const r = await fetch(`https://v6.exchangerate-api.com/v6/${process.env.EXCHANGE_RATE_API_KEY}/latest/USD`); const d = await r.json(); res.json(d.conversion_rates || {}); } catch (e) { res.json({}); } });
-app.get('/api/country-info', async (req, res) => { try { const r = await fetch(`https://restcountries.com/v3.1/alpha/${req.query.code}`); const d = await r.json(); res.json(d[0] || null); } catch (e) { res.json(null); } });
-app.get('/api/events', async (req, res) => { try { const r = await fetch(`https://app.ticketmaster.com/discovery/v2/events.json?apikey=${process.env.TICKETMASTER_API_KEY}&keyword=${req.query.keyword}&size=5`); const d = await r.json(); res.json(d._embedded?.events || []); } catch (e) { res.json([]); } });
-app.get('/api/hotels', async (req, res) => { try { const r = await amadeus.referenceData.locations.hotels.byCity.get({ cityCode: req.query.cityCode, radius: 20, radiusUnit: 'KM' }); const h = await Promise.all(r.data.slice(0, 20).map(async (x) => ({ ...x, media: [{ uri: "https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&w=800&q=80" }] }))); res.json(h); } catch (e) { res.json([]); } });
-
-// 🖼️ NEW: UNSPLASH DESTINATION IMAGE ROUTE
-app.get('/api/destination-image', async (req, res) => {
-  const { query } = req.query;
-  if (!query) return res.json({ url: null });
-
-  const FALLBACK_IMAGE = "https://images.unsplash.com/photo-1488646953014-85cb44e25828?auto=format&fit=crop&w=1920&q=80";
-
-  try {
-    const apiKey = process.env.UNSPLASH_ACCESS_KEY?.trim();
-    if (!apiKey) {
-       console.warn("⚠️ No Unsplash Key. Using fallback image.");
-       return res.json({ url: FALLBACK_IMAGE });
-    }
-
-    const searchQuery = encodeURIComponent(query + " city landmark viewpoint");
-    const unsplashUrl = `https://api.unsplash.com/search/photos?query=${searchQuery}&orientation=landscape&per_page=1&client_id=${apiKey}`;
-    
-    const response = await fetch(unsplashUrl);
-
-    if (!response.ok) {
-       console.error(`❌ Unsplash API Error: ${response.status}`);
-       return res.json({ url: FALLBACK_IMAGE });
-    }
-
-    const data = await response.json();
-
-    if (data.results && data.results.length > 0) {
-      console.log(`🖼️ Found background image for: ${query}`);
-      res.json({ url: data.results[0].urls.regular });
-    } else {
-      res.json({ url: FALLBACK_IMAGE });
-    }
-
-  } catch (e) {
-    console.error("❌ Unsplash Fetch Error:", e.message);
-    res.json({ url: FALLBACK_IMAGE });
-  }
+// 6. CITY SEARCH
+app.get('/api/city-search', async (req, res) => {
+    try {
+        const { keyword } = req.query;
+        const r = await amadeus.referenceData.locations.get({ keyword, subType: 'CITY' });
+        res.json(r.data);
+    } catch (e) { res.json([]); }
 });
 
 app.listen(PORT, () => console.log(`🔥 Backend running on http://localhost:${PORT}`));

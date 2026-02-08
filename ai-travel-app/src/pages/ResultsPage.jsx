@@ -1,21 +1,28 @@
 import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { ArrowLeft, Plane, Hotel, MapPin, Calendar, Cloud, Loader2, DollarSign, Sun } from 'lucide-react';
+import { ArrowLeft, Plane, Hotel, MapPin, Calendar, Loader2, DollarSign, Sun } from 'lucide-react';
 
 import { getWeather } from '../services/weatherService';
 import { fetchFlights, fetchHotels } from '../services/amadeusAPI';
-// Removed getTransportOptions import
 
 import ItineraryTimeline from '../components/ItineraryTimeline';
 import DestinationBackground from '../components/DestinationBackground';
-// Removed TransportModes import
 
 const ResultsPage = ({ searchData, onBack }) => {
   const [weather, setWeather] = useState(null);
   const [flights, setFlights] = useState([]);
   const [hotels, setHotels] = useState([]);
-  // Removed transport state
   const [loading, setLoading] = useState(true);
+
+  // --- 🔥 FIX START: Safe Data Extraction ---
+  // The SearchForm sends objects now, so we must extract strings to avoid crashes.
+  const getCityName = (data) => data?.name || data || "Destination";
+  const getCityCode = (data) => data?.iataCode || data || "";
+
+  const destinationName = searchData ? getCityName(searchData.toCity) : "";
+  const destinationCode = searchData ? getCityCode(searchData.toCity) : "";
+  const originCode = searchData ? getCityCode(searchData.fromCity) : "";
+  // --- 🔥 FIX END ---
 
   useEffect(() => {
     if (!searchData) return;
@@ -23,21 +30,19 @@ const ResultsPage = ({ searchData, onBack }) => {
     const loadAllData = async () => {
       setLoading(true);
       try {
-        const destination = searchData.toCity || searchData.destinationName;
-        
-        // 1. Fetch Flights
+        // 1. Fetch Flights (Uses IATA Codes: DEL, LHR)
         const flightResults = await fetchFlights(
-          searchData.fromCity,
-          destination,
-          searchData.departureDate,
+          originCode,       // Fixed: Was passing object
+          destinationCode,  // Fixed: Was passing object
+          searchData.departDate || searchData.departureDate, // Handle both key names
           searchData.returnDate
         );
         setFlights(flightResults);
 
-        // 2. Fetch Weather & Hotels
+        // 2. Fetch Weather & Hotels (Uses City Name: "Delhi")
         const [weatherData, hotelResults] = await Promise.all([
-          getWeather(destination),
-          fetchHotels(destination)
+          getWeather(destinationName),
+          fetchHotels(destinationName)
         ]);
 
         setWeather(weatherData);
@@ -76,15 +81,15 @@ const ResultsPage = ({ searchData, onBack }) => {
     );
   }
 
-  const destination = searchData.toCity || searchData.destinationName;
-
   return (
-    <DestinationBackground destination={destination}>
+    // Fixed: Pass string name, not object
+    <DestinationBackground destination={destinationName}>
       
       {loading ? (
         <div className="min-h-screen flex flex-col items-center justify-center text-white">
           <Loader2 size={48} className="animate-spin text-blue-500 mb-4" />
-          <h2 className="text-2xl font-bold">Discovering {destination}...</h2>
+          {/* Fixed: Render string name */}
+          <h2 className="text-2xl font-bold">Discovering {destinationName}...</h2>
           <p className="text-gray-400 mt-2">Loading flights, hotels & experiences</p>
         </div>
       ) : (
@@ -101,12 +106,13 @@ const ResultsPage = ({ searchData, onBack }) => {
 
             <div className="flex flex-wrap items-end justify-between gap-6">
               <div>
+                {/* Fixed: Render string name */}
                 <h1 className="text-5xl md:text-7xl font-black uppercase tracking-tight mb-3 text-white drop-shadow-lg">
-                  {destination}
+                  {destinationName}
                 </h1>
                 <div className="flex items-center gap-3 text-gray-300">
                   <span className="flex items-center gap-1 bg-white/10 backdrop-blur px-4 py-2 rounded-full text-sm">
-                    <Calendar size={16} /> {searchData.departureDate}
+                    <Calendar size={16} /> {searchData.departDate || searchData.departureDate}
                     {searchData.returnDate && ` - ${searchData.returnDate}`}
                   </span>
                   <span className="flex items-center gap-1 bg-white/10 backdrop-blur px-4 py-2 rounded-full text-sm">
@@ -186,7 +192,7 @@ const ResultsPage = ({ searchData, onBack }) => {
 
                             <div className="text-right">
                               <p className="text-2xl font-bold text-emerald-400">
-                                ${flight.price?.total}
+                                {flight.price?.currency} {flight.price?.total}
                               </p>
                               <button className="mt-2 bg-blue-600 hover:bg-blue-700 text-white text-sm px-4 py-2 rounded-full transition-colors">
                                 Select
@@ -260,7 +266,8 @@ const ResultsPage = ({ searchData, onBack }) => {
             {/* Right Column - Itinerary */}
             <div>
               <ItineraryTimeline 
-                destination={destination}
+                // Fixed: Pass string name
+                destination={destinationName}
                 days={3} 
                 budget={searchData.budget} 
                 interests={searchData.interests}

@@ -1,195 +1,211 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { generateItinerary } from '../services/api';
-import { MapPin, Calendar, Users, DollarSign, Loader2, Plane } from 'lucide-react';
+import { MapPin, Calendar, Wallet, Search, Sparkles, Globe } from 'lucide-react';
+import { motion } from 'framer-motion';
+import CityAutocomplete from './CityAutocomplete';
 
-const SearchForm = ({ onSearch }) => {
+const SearchForm = ({ onSearch, isLoading }) => {
   const [tripType, setTripType] = useState('round');
   const [fromCity, setFromCity] = useState(null);
   const [toCity, setToCity] = useState(null);
   const [departDate, setDepartDate] = useState('');
   const [returnDate, setReturnDate] = useState('');
   const [budget, setBudget] = useState(2000);
-  const [currency, setCurrency] = useState('USD');
+  const [currency, setCurrency] = useState('INR');
   const [interests, setInterests] = useState([]);
-  const [customInterest, setCustomInterest] = useState(''); // 🆕 New State
 
   const INTEREST_TAGS = [
-    { id: 'culture', label: '🏛️ Culture' },
-    { id: 'food', label: '🍴 Food' },
-    { id: 'nature', label: '🌴 Nature' },
-    { id: 'adventure', label: '⚡ Adventure' },
-    { id: 'nightlife', label: '🌙 Nightlife' },
-    { id: 'shopping', label: '🛍️ Shopping' }
+    'Culture', 'Food', 'Nature', 'Adventure', 'Nightlife', 'Shopping', 'Relaxation'
   ];
 
-  const toggleInterest = (id) => {
-    setInterests(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
+  const toggleInterest = (tag) => {
+    setInterests(prev => prev.includes(tag) ? prev.filter(i => i !== tag) : [...prev, tag]);
   };
 
-  const handleSearch = () => {
-    if (!fromCity || !toCity) {
-      alert("Please select both 'From' and 'To' cities.");
+  const handleSearchClick = () => {
+    if (!fromCity || !toCity || !departDate) {
+      alert("Please fill in the required fields (From, To, Departure).");
       return;
     }
-    if (!departDate) {
-      alert("Please select a departure date.");
-      return;
-    }
-
-    const searchPayload = {
-      fromCity: fromCity.iataCode,
-      toCity: toCity.iataCode,
-      destinationName: toCity.name, // Send name for AI
-      departureDate: departDate,
-      returnDate: returnDate,
-      budget,
-      currency,
-      interests,
-      customInterest, // 🆕 Sending custom text
-      tripType
-    };
-
-    console.log("🚀 Sending Search:", searchPayload);
-    if (onSearch) onSearch(searchPayload);
+    
+    onSearch({ 
+        fromCity, 
+        toCity, 
+        departDate, 
+        returnDate, 
+        budget, 
+        currency, 
+        interests, 
+        tripType 
+    });
   };
 
   return (
-    <div className="bg-white/10 backdrop-blur-lg border border-white/20 p-6 md:p-8 rounded-3xl shadow-2xl max-w-4xl mx-auto text-white">
-      
-      {/* TABS */}
-      <div className="flex justify-center mb-8">
-        <div className="bg-white/10 p-1 rounded-full flex">
+    <motion.div 
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.6 }}
+      className="bg-slate-900/60 backdrop-blur-2xl border border-white/10 p-8 rounded-[2.5rem] shadow-2xl shadow-black/50 relative overflow-hidden"
+    >
+      {/* Decorative Top Glow */}
+      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-1/2 h-1 bg-gradient-to-r from-transparent via-blue-500 to-transparent opacity-50 blur-sm" />
+
+      {/* 1. Trip Type Toggle */}
+      <div className="flex justify-center mb-10">
+        <div className="bg-slate-950/50 p-1.5 rounded-full flex border border-white/5">
           <button 
             onClick={() => setTripType('one-way')}
-            className={`px-6 py-2 rounded-full text-sm font-bold transition-all ${tripType === 'one-way' ? 'bg-white text-blue-900 shadow-lg' : 'hover:bg-white/10 text-white'}`}
+            className={`px-6 py-2.5 rounded-full text-sm font-bold transition-all duration-300 ${tripType === 'one-way' ? 'bg-slate-800 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}
           >
             One Way
           </button>
           <button 
             onClick={() => setTripType('round')}
-            className={`px-6 py-2 rounded-full text-sm font-bold transition-all flex items-center gap-2 ${tripType === 'round' ? 'bg-white text-blue-900 shadow-lg' : 'hover:bg-white/10 text-white'}`}
+            className={`px-6 py-2.5 rounded-full text-sm font-bold transition-all duration-300 flex items-center gap-2 ${tripType === 'round' ? 'bg-white text-slate-900 shadow-lg' : 'text-slate-400 hover:text-white'}`}
           >
-            <span className="text-xs">⇄</span> Round Trip
+            <Globe size={14} /> Round Trip
           </button>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-        {/* CITIES */}
-        <div className="space-y-6">
-          <CityAutocomplete 
-            label="From City" 
-            onSelect={setFromCity} 
-            initialValue={fromCity ? `${fromCity.name} (${fromCity.iataCode})` : ''}
-          />
-          <CityAutocomplete 
-            label="Destination City" 
-            onSelect={setToCity} 
-            initialValue={toCity ? `${toCity.name} (${toCity.iataCode})` : ''}
-          />
-        </div>
-
-        {/* DATES */}
-        <div className="space-y-6">
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-bold mb-2 text-blue-200">Departure</label>
-              <div className="relative">
-                <Calendar className="absolute left-3 top-3 text-slate-400" size={18} />
-                <input 
-                  type="date" 
-                  className="w-full bg-slate-800 p-3 pl-10 rounded-xl text-white border border-slate-600 focus:border-blue-500 outline-none"
-                  onChange={(e) => setDepartDate(e.target.value)}
-                  value={departDate}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-8">
+        {/* 2. Cities Section */}
+        <div className="lg:col-span-5 space-y-6">
+          <div className="grid grid-cols-1 gap-6">
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-slate-400 ml-4 tracking-wider uppercase">From City</label>
+              <div className="relative group">
+                <MapPin className="absolute left-4 top-4 text-slate-500 group-focus-within:text-blue-400 transition-colors z-10" size={20} />
+                <CityAutocomplete 
+                  onSelect={setFromCity}
+                  placeholder="e.g. Delhi"
+                  initialValue={fromCity ? fromCity.name : ''}
+                  className="pl-12 bg-slate-950/50 text-white border-white/10 focus:ring-blue-500/50" 
                 />
               </div>
             </div>
-            <div>
-              <label className="block text-sm font-bold mb-2 text-blue-200">Return</label>
-              <div className="relative">
-                <Calendar className="absolute left-3 top-3 text-slate-400" size={18} />
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-slate-400 ml-4 tracking-wider uppercase">To City</label>
+              <div className="relative group">
+                <MapPin className="absolute left-4 top-4 text-slate-500 group-focus-within:text-purple-400 transition-colors z-10" size={20} />
+                <CityAutocomplete 
+                  onSelect={setToCity}
+                  placeholder="Destination"
+                  initialValue={toCity ? toCity.name : ''}
+                  className="pl-12 bg-slate-950/50 text-white border-white/10 focus:ring-purple-500/50"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* 3. Dates Section */}
+        <div className="lg:col-span-4 space-y-6">
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-slate-400 ml-2 tracking-wider uppercase">Departure</label>
+              <div className="relative group">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                  <Calendar className="text-slate-500 group-focus-within:text-blue-400 transition-colors" size={18} />
+                </div>
                 <input 
                   type="date" 
-                  className="w-full bg-slate-800 p-3 pl-10 rounded-xl text-white border border-slate-600 focus:border-blue-500 outline-none disabled:opacity-50"
-                  disabled={tripType === 'one-way'}
-                  onChange={(e) => setReturnDate(e.target.value)}
+                  value={departDate}
+                  onChange={(e) => setDepartDate(e.target.value)}
+                  className="w-full bg-slate-950/50 text-white border border-white/10 rounded-2xl py-3.5 pl-10 pr-3 focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 outline-none transition-all placeholder-slate-600 appearance-none min-h-[52px]"
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-slate-400 ml-2 tracking-wider uppercase">Return</label>
+              <div className="relative group">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                  <Calendar className="text-slate-500 group-focus-within:text-purple-400 transition-colors" size={18} />
+                </div>
+                <input 
+                  type="date" 
                   value={returnDate}
+                  onChange={(e) => setReturnDate(e.target.value)}
+                  disabled={tripType === 'one-way'}
+                  className="w-full bg-slate-950/50 text-white border border-white/10 rounded-2xl py-3.5 pl-10 pr-3 focus:ring-2 focus:ring-purple-500/50 focus:border-purple-500/50 outline-none transition-all placeholder-slate-600 disabled:opacity-30 disabled:cursor-not-allowed appearance-none min-h-[52px]"
                 />
               </div>
             </div>
           </div>
 
-          {/* BUDGET */}
-          <div>
-            <label className="block text-sm font-bold mb-2 text-blue-200">Total Budget</label>
+          {/* 4. Budget Section */}
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-slate-400 ml-2 tracking-wider uppercase">Total Budget</label>
             <div className="flex gap-2">
               <select 
-                className="bg-slate-800 p-3 rounded-xl border border-slate-600 text-white font-bold outline-none"
-                value={currency}
+                value={currency} 
                 onChange={(e) => setCurrency(e.target.value)}
+                className="bg-slate-950/50 text-white font-bold border border-white/10 rounded-2xl px-3 py-3.5 outline-none focus:ring-2 focus:ring-blue-500/50 appearance-none text-center min-w-[80px]"
               >
-                <option value="USD">USD</option>
-                <option value="INR">INR</option>
-                <option value="EUR">EUR</option>
+                <option value="INR">INR ₹</option>
+                <option value="USD">USD $</option>
+                <option value="EUR">EUR €</option>
               </select>
-              <div className="relative flex-1">
-                <Wallet className="absolute left-3 top-3 text-slate-400" size={18} />
+              <div className="relative flex-1 group">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                  <Wallet className="text-slate-500 group-focus-within:text-emerald-400 transition-colors" size={18} />
+                </div>
                 <input 
-                  type="number" 
-                  className="w-full bg-slate-800 p-3 pl-10 rounded-xl text-white border border-slate-600 focus:border-blue-500 outline-none"
+                  type="number"
                   value={budget}
                   onChange={(e) => setBudget(e.target.value)}
+                  className="w-full bg-slate-950/50 text-white font-bold border border-white/10 rounded-2xl py-3.5 pl-10 pr-4 outline-none focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500/50 transition-all"
+                  placeholder="2000"
                 />
               </div>
             </div>
           </div>
         </div>
-      </div>
 
-      {/* INTERESTS */}
-      <div className="mb-8">
-        <label className="block text-sm font-bold mb-3 text-blue-200">Trip Vibe & Interests</label>
-        
-        {/* Pills */}
-        <div className="flex flex-wrap gap-3 mb-4">
-          {INTEREST_TAGS.map((tag) => (
-            <button
-              key={tag.id}
-              onClick={() => toggleInterest(tag.id)}
-              className={`px-4 py-2 rounded-full text-sm font-bold border transition-all ${
-                interests.includes(tag.id) 
-                  ? 'bg-blue-500 border-blue-400 text-white shadow-lg scale-105' 
-                  : 'bg-white/5 border-white/10 text-white/70 hover:bg-white/10'
-              }`}
-            >
-              {tag.label}
-            </button>
-          ))}
-        </div>
-
-        {/* 🆕 Custom Interest Input */}
-        <div className="relative">
-          <Sparkles className="absolute left-3 top-3.5 text-yellow-400" size={18} />
-          <input 
-            type="text" 
-            placeholder="Anything specific? (e.g. Anime, Vegan Food, History, Hidden Gems)..." 
-            className="w-full bg-white/5 p-3 pl-10 rounded-xl text-white border border-white/10 focus:border-blue-500 outline-none placeholder-white/30"
-            value={customInterest}
-            onChange={(e) => setCustomInterest(e.target.value)}
-          />
+        {/* 5. Interests Section */}
+        <div className="lg:col-span-3 space-y-2">
+          <label className="text-xs font-bold text-slate-400 ml-2 tracking-wider uppercase flex items-center gap-2">
+            Trip Vibe <Sparkles size={12} className="text-yellow-400" />
+          </label>
+          <div className="bg-slate-950/30 rounded-2xl p-4 border border-white/5 h-[170px] overflow-y-auto custom-scrollbar">
+            <div className="flex flex-wrap gap-2">
+              {INTEREST_TAGS.map((tag) => (
+                <button
+                  key={tag}
+                  onClick={() => toggleInterest(tag)}
+                  className={`text-xs px-3 py-1.5 rounded-lg border transition-all duration-200 ${
+                    interests.includes(tag)
+                      ? 'bg-slate-700 text-white border-slate-500 shadow-md transform scale-105'
+                      : 'bg-transparent text-slate-400 border-slate-700 hover:border-slate-500 hover:text-slate-200'
+                  }`}
+                >
+                  {tag}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
 
-      {/* SUBMIT BUTTON */}
-      <button 
-        onClick={handleSearch}
-        className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 rounded-xl shadow-xl shadow-blue-900/20 transition-all active:scale-95 flex items-center justify-center gap-2 text-lg"
+      {/* 6. Big Search Button */}
+      <motion.button 
+        whileHover={{ scale: 1.01 }}
+        whileTap={{ scale: 0.98 }}
+        onClick={handleSearchClick}
+        disabled={isLoading}
+        className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-5 rounded-2xl shadow-lg shadow-blue-900/40 transition-all flex items-center justify-center gap-3 text-lg group relative overflow-hidden"
       >
-        <Search size={24} /> SEARCH TRIPS
-      </button>
+        <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-1000" />
+        {isLoading ? (
+            <span className="flex items-center gap-2">Thinking...</span>
+        ) : (
+            <>
+                <Search size={24} className="group-hover:scale-110 transition-transform" /> 
+                SEARCH TRIPS
+            </>
+        )}
+      </motion.button>
 
-    </div>
+    </motion.div>
   );
 };
 

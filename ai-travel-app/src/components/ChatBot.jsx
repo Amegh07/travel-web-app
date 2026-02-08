@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
-import { Sparkles, Loader2 } from 'lucide-react';
-import { chatWithGemini } from '../services/geminiAPI';
+import { Sparkles, Loader2, Send, X, MessageCircle, MapPin, Utensils, Camera, Wallet } from 'lucide-react';
+import { chatWithAI } from '../services/api'; // ✅ Safe Import
 
 const ChatBot = ({ destination }) => {
   const [isOpen, setIsOpen] = useState(false);
@@ -18,21 +18,9 @@ const ChatBot = ({ destination }) => {
   const suggestions = [
     { label: "Must-visit spots?", icon: <MapPin size={14} />, text: `What are the top 3 must-visit attractions in ${destination}?` },
     { label: "Best local food?", icon: <Utensils size={14} />, text: `What is the most famous local food in ${destination} and where should I try it?` },
-    { label: "Hidden gems?", icon: <Camera size={14} />, text: `Tell me about some hidden gems or non-touristy spots in ${destination}.` },
+    { label: "Hidden gems?", icon: <Camera size={14} />, text: `Tell me about some hidden gems in ${destination}.` },
     { label: "Budget tips?", icon: <Wallet size={14} />, text: `Give me some budget-saving travel tips for ${destination}.` },
   ];
-
-  const formatMessage = (text) => {
-    return text.split('\n').map((line, i) => (
-      <span key={i} className="block min-h-[1.2em]">
-        {line.split(/(\*\*.*?\*\*)/).map((part, j) => 
-          part.startsWith('**') && part.endsWith('**') 
-            ? <strong key={j} className="text-gray-900 font-bold">{part.slice(2, -2)}</strong> 
-            : part
-        )}
-      </span>
-    ));
-  };
 
   const handleSendMessage = async (textOverride = null) => {
     const textToSend = textOverride || inputText;
@@ -44,7 +32,7 @@ const ChatBot = ({ destination }) => {
     setIsLoading(true);
 
     try {
-      const aiReplyText = await chatWithGemini(textToSend, messages);
+      const aiReplyText = await chatWithAI(textToSend, messages);
       const botMessage = { id: Date.now() + 1, text: aiReplyText, sender: 'bot' };
       setMessages(prev => [...prev, botMessage]);
     } catch (error) {
@@ -58,8 +46,7 @@ const ChatBot = ({ destination }) => {
 
   return (
     <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end font-sans">
-      
-      {/* CHAT WINDOW (Standard Div instead of Motion) */}
+      {/* CHAT WINDOW */}
       {isOpen && (
         <div className="mb-4 w-[340px] md:w-[400px] bg-white rounded-2xl shadow-2xl border border-gray-100 overflow-hidden flex flex-col max-h-[600px]">
             {/* Header */}
@@ -92,7 +79,7 @@ const ChatBot = ({ destination }) => {
                     ? 'bg-blue-600 text-white rounded-br-none' 
                     : 'bg-white text-gray-700 border border-gray-200 rounded-bl-none'
                   }`}>
-                    {msg.sender === 'user' ? msg.text : formatMessage(msg.text)}
+                    {msg.text}
                   </div>
                 </div>
               ))}
@@ -157,12 +144,6 @@ const ChatBot = ({ destination }) => {
         className="group bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white p-4 rounded-full shadow-lg transition-all hover:scale-110 active:scale-95 flex items-center justify-center relative"
       >
         {isOpen ? <X size={24} /> : <MessageCircle size={24} />}
-        {!isOpen && (
-          <span className="absolute top-0 right-0 flex h-3 w-3">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-            <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
-          </span>
-        )}
       </button>
     </div>
   );
