@@ -1,280 +1,171 @@
 import { useEffect, useState } from 'react';
-import { motion } from 'framer-motion';
-import { ArrowLeft, Plane, Hotel, MapPin, Calendar, Loader2, DollarSign, Sun } from 'lucide-react';
-
-import { getWeather } from '../services/weatherService';
-import { fetchFlights, fetchHotels } from '../services/amadeusAPI';
-
+import { ArrowLeft, Plane, Hotel, Calendar, DollarSign, Loader2, Car } from 'lucide-react';
+import { fetchFlights, fetchHotels } from '../services/api'; 
 import ItineraryTimeline from '../components/ItineraryTimeline';
 import DestinationBackground from '../components/DestinationBackground';
+import ChatBot from '../components/ChatBot';
 
 const ResultsPage = ({ searchData, onBack }) => {
-  const [weather, setWeather] = useState(null);
-  const [flights, setFlights] = useState([]);
+  const [transport, setTransport] = useState({ type: 'loading', data: [] });
   const [hotels, setHotels] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // --- 🔥 FIX START: Safe Data Extraction ---
-  // The SearchForm sends objects now, so we must extract strings to avoid crashes.
-  const getCityName = (data) => data?.name || data || "Destination";
-  const getCityCode = (data) => data?.iataCode || data || "";
+  // Safe Extraction
+  const getName = (data) => data?.name || data || "Destination";
+  const getCode = (data) => data?.iataCode || data || "";
 
-  const destinationName = searchData ? getCityName(searchData.toCity) : "";
-  const destinationCode = searchData ? getCityCode(searchData.toCity) : "";
-  const originCode = searchData ? getCityCode(searchData.fromCity) : "";
-  // --- 🔥 FIX END ---
+  const destName = searchData ? getName(searchData.toCity) : "";
+  const destCode = searchData ? getCode(searchData.toCity) : "";
+  const originCode = searchData ? getCode(searchData.fromCity) : "";
 
   useEffect(() => {
     if (!searchData) return;
 
-    const loadAllData = async () => {
+    const loadData = async () => {
       setLoading(true);
       try {
-        // 1. Fetch Flights (Uses IATA Codes: DEL, LHR)
-        const flightResults = await fetchFlights(
-          originCode,       // Fixed: Was passing object
-          destinationCode,  // Fixed: Was passing object
-          searchData.departDate || searchData.departureDate, // Handle both key names
-          searchData.returnDate
-        );
-        setFlights(flightResults);
+        // 1. Smart Transport (Flights OR Road Trip via OSRM)
+        const transportData = await fetchFlights(originCode, destCode, searchData.departDate);
+        setTransport({ type: transportData.type, data: transportData.results });
 
-        // 2. Fetch Weather & Hotels (Uses City Name: "Delhi")
-        const [weatherData, hotelResults] = await Promise.all([
-          getWeather(destinationName),
-          fetchHotels(destinationName)
-        ]);
-
-        setWeather(weatherData);
-        setHotels(hotelResults);
-
-      } catch (err) {
-        console.error("Data Fetch Error:", err);
-      } finally {
-        setLoading(false);
+        // 2. Hotels
+        const hotelData = await fetchHotels(destCode);
+        setHotels(hotelData || []);
+        
+      } catch (err) { 
+        console.error("Failed to load results:", err); 
+      } finally { 
+        setLoading(false); 
       }
     };
 
-    loadAllData();
+    loadData();
   }, [searchData]);
 
-  const formatTime = (isoString) => {
-    if (!isoString) return "--:--";
-    return new Date(isoString).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  };
-
-  const formatDuration = (duration) => {
-    if (!duration) return "";
-    return duration.replace("PT", "").replace("H", "h ").replace("M", "m");
-  };
-
-  if (!searchData) {
-    return (
-      <div className="min-h-screen flex items-center justify-center text-white bg-black">
-        <div className="text-center">
-          <h2 className="text-2xl font-bold mb-4">No search data</h2>
-          <button onClick={onBack} className="bg-blue-600 px-6 py-2 rounded-lg">
-            Go Back
-          </button>
-        </div>
-      </div>
-    );
-  }
+  if (!searchData) return <div className="text-white text-center mt-20">No Data</div>;
 
   return (
-    // Fixed: Pass string name, not object
-    <DestinationBackground destination={destinationName}>
+    <DestinationBackground destination={destName}>
       
+      {/* Floating ChatBot Agent */}
+      <ChatBot destination={destName} />
+
       {loading ? (
-        <div className="min-h-screen flex flex-col items-center justify-center text-white">
-          <Loader2 size={48} className="animate-spin text-blue-500 mb-4" />
-          {/* Fixed: Render string name */}
-          <h2 className="text-2xl font-bold">Discovering {destinationName}...</h2>
-          <p className="text-gray-400 mt-2">Loading flights, hotels & experiences</p>
+        <div className="h-screen flex flex-col items-center justify-center text-white bg-black/50 backdrop-blur-sm">
+            <Loader2 className="animate-spin mb-4" size={48} />
+            <h2 className="text-2xl font-bold">Planning trip to {destName}...</h2>
+            <p className="text-gray-400 mt-2">Checking flights and road conditions...</p>
         </div>
       ) : (
-        <div className="min-h-screen p-6 md:p-10">
-          
-          {/* Header */}
-          <div className="max-w-6xl mx-auto mb-8">
-            <button 
-              onClick={onBack}
-              className="flex items-center gap-2 text-gray-400 hover:text-white mb-6 transition-colors"
-            >
-              <ArrowLeft size={20} /> Back to Search
+        <div className="min-h-screen p-6 max-w-6xl mx-auto pb-24">
+            {/* Header */}
+            <button onClick={onBack} className="text-white flex items-center gap-2 mb-6 hover:text-blue-300 transition-colors">
+                <ArrowLeft/> Back
             </button>
-
-            <div className="flex flex-wrap items-end justify-between gap-6">
-              <div>
-                {/* Fixed: Render string name */}
-                <h1 className="text-5xl md:text-7xl font-black uppercase tracking-tight mb-3 text-white drop-shadow-lg">
-                  {destinationName}
-                </h1>
-                <div className="flex items-center gap-3 text-gray-300">
-                  <span className="flex items-center gap-1 bg-white/10 backdrop-blur px-4 py-2 rounded-full text-sm">
-                    <Calendar size={16} /> {searchData.departDate || searchData.departureDate}
-                    {searchData.returnDate && ` - ${searchData.returnDate}`}
-                  </span>
-                  <span className="flex items-center gap-1 bg-white/10 backdrop-blur px-4 py-2 rounded-full text-sm">
-                    <DollarSign size={16} /> {searchData.budget}
-                  </span>
-                </div>
-              </div>
-
-              {/* Weather Widget */}
-              {weather && (
-                <div className="bg-white/10 backdrop-blur-md p-4 rounded-2xl border border-white/20 flex items-center gap-4">
-                  <Sun size={40} className="text-yellow-400" />
-                  <div>
-                    <p className="text-3xl font-bold">{weather.temp}°C</p>
-                    <p className="text-sm text-gray-300">{weather.condition}</p>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-8">
             
-            {/* Left Column - Flights & Hotels */}
-            <div className="lg:col-span-2 space-y-8">
-              
-              {/* Flights Section */}
-              <section>
-                <h2 className="text-xl font-bold mb-4 flex items-center gap-2 text-gray-200">
-                  <Plane className="text-blue-400" /> Best Flights
-                </h2>
-                
-                <div className="space-y-4">
-                  {flights.length > 0 ? (
-                    flights.slice(0, 3).map((flight) => {
-                      const outbound = flight.itineraries?.[0];
-                      const segments = outbound?.segments || [];
-                      const firstSeg = segments[0];
-                      const lastSeg = segments[segments.length - 1];
-                      const airline = flight.validatingAirlineCodes?.[0] || "Unknown";
-
-                      return (
-                        <motion.div 
-                          key={flight.id}
-                          initial={{ opacity: 0, y: 10 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          className="bg-black/40 backdrop-blur-md border border-white/10 p-5 rounded-2xl hover:bg-black/50 transition-all"
-                        >
-                          <div className="flex items-center justify-between flex-wrap gap-4">
-                            
-                            <div className="flex items-center gap-3">
-                              <div className="w-12 h-12 bg-white rounded-full flex items-center justify-center">
-                                <span className="text-black font-bold text-xs">{airline}</span>
-                              </div>
-                              <div>
-                                <p className="font-bold text-white">{airline}</p>
-                                <p className="text-xs text-gray-400">{formatDuration(outbound?.duration)}</p>
-                              </div>
-                            </div>
-
-                            <div className="flex items-center gap-4 text-center">
-                              <div>
-                                <p className="text-2xl font-bold text-white">{firstSeg?.departure?.iataCode}</p>
-                                <p className="text-xs text-gray-400">{formatTime(firstSeg?.departure?.at)}</p>
-                              </div>
-                              
-                              <div className="flex flex-col items-center w-20">
-                                <Plane size={16} className="text-blue-400 rotate-90" />
-                                <div className="w-full h-px bg-gray-600 my-1"></div>
-                              </div>
-
-                              <div>
-                                <p className="text-2xl font-bold text-white">{lastSeg?.arrival?.iataCode}</p>
-                                <p className="text-xs text-gray-400">{formatTime(lastSeg?.arrival?.at)}</p>
-                              </div>
-                            </div>
-
-                            <div className="text-right">
-                              <p className="text-2xl font-bold text-emerald-400">
-                                {flight.price?.currency} {flight.price?.total}
-                              </p>
-                              <button className="mt-2 bg-blue-600 hover:bg-blue-700 text-white text-sm px-4 py-2 rounded-full transition-colors">
-                                Select
-                              </button>
-                            </div>
-                          </div>
-                        </motion.div>
-                      );
-                    })
-                  ) : (
-                    <div className="bg-black/30 border border-white/10 p-8 rounded-2xl text-center text-gray-400">
-                      <Plane size={48} className="mx-auto mb-4 opacity-30" />
-                      <p>No direct flights found via Amadeus.</p>
-                    </div>
-                  )}
-                </div>
-              </section>
-
-              {/* Hotels Section */}
-              <section>
-                <h2 className="text-xl font-bold mb-4 flex items-center gap-2 text-gray-200">
-                  <Hotel className="text-purple-400" /> Where to Stay
-                </h2>
-                
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {hotels.length > 0 ? (
-                    hotels.map((hotel) => (
-                      <motion.div 
-                        key={hotel.id}
-                        initial={{ opacity: 0, scale: 0.95 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        className="bg-black/40 backdrop-blur-md border border-white/10 rounded-2xl overflow-hidden hover:border-purple-500/30 transition-all group"
-                      >
-                        <div className="h-40 overflow-hidden relative">
-                          <img 
-                            src={hotel.image} 
-                            alt={hotel.name} 
-                            className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
-                          />
-                          <div className="absolute top-3 right-3 bg-black/60 backdrop-blur px-3 py-1 rounded-full text-yellow-400 text-sm font-bold">
-                            ★ {hotel.rating}
-                          </div>
-                        </div>
-                        
-                        <div className="p-4">
-                          <h3 className="font-bold text-lg text-white mb-1 truncate">{hotel.name}</h3>
-                          <p className="text-sm text-gray-400 flex items-center gap-1 mb-3">
-                            <MapPin size={14} /> City Center
-                          </p>
-                          <div className="flex items-center justify-between">
-                            <span className="text-emerald-400 font-bold">
-                              {hotel.price}
-                            </span>
-                            <button className="bg-purple-600/20 hover:bg-purple-600/40 text-purple-300 text-sm px-4 py-2 rounded-lg transition-colors">
-                              View Deal
-                            </button>
-                          </div>
-                        </div>
-                      </motion.div>
-                    ))
-                  ) : (
-                    <div className="col-span-2 bg-black/30 border border-white/10 p-8 rounded-2xl text-center text-gray-400">
-                      <Hotel size={48} className="mx-auto mb-4 opacity-30" />
-                      <p>No hotels found.</p>
-                    </div>
-                  )}
-                </div>
-              </section>
+            <h1 className="text-6xl font-black text-white mb-2 drop-shadow-lg">{destName}</h1>
+            
+            <div className="flex gap-4 text-gray-200 mb-10">
+                <span className="flex items-center gap-2 bg-white/10 backdrop-blur px-4 py-2 rounded-full border border-white/5">
+                    <Calendar size={16}/> {searchData.departDate}
+                </span>
+                <span className="flex items-center gap-2 bg-white/10 backdrop-blur px-4 py-2 rounded-full border border-white/5">
+                    <DollarSign size={16}/> {searchData.budget} {searchData.currency}
+                </span>
             </div>
 
-            {/* Right Column - Itinerary */}
-            <div>
-              <ItineraryTimeline 
-                // Fixed: Pass string name
-                destination={destinationName}
-                days={3} 
-                budget={searchData.budget} 
-                interests={searchData.interests}
-              />
-            </div>
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                {/* Left Column: Transport & Hotels */}
+                <div className="lg:col-span-2 space-y-8">
+                    
+                    {/* TRANSPORT SECTION */}
+                    <section>
+                        <h2 className="text-xl font-bold text-white mb-4 flex gap-2 items-center">
+                            {transport.type === 'road_trip' ? <Car className="text-emerald-400"/> : <Plane className="text-blue-400"/>} 
+                            {transport.type === 'road_trip' ? 'Recommended Drive' : 'Best Flights'}
+                        </h2>
 
-          </div>
+                        <div className="space-y-3">
+                            {transport.type === 'road_trip' ? (
+                                <div className="bg-emerald-900/40 backdrop-blur p-6 rounded-xl border border-emerald-500/30 text-white shadow-xl">
+                                    <div className="flex items-start gap-4">
+                                        <div className="bg-emerald-500 p-3 rounded-full shadow-lg">
+                                            <Car size={24} className="text-white" />
+                                        </div>
+                                        <div>
+                                            <h3 className="text-xl font-bold text-emerald-200">Road Trip Recommended</h3>
+                                            {transport.data[0] && (
+                                                <>
+                                                    <p className="text-emerald-100 mt-1">{transport.data[0].message}</p>
+                                                    <div className="mt-4 flex gap-6 text-sm font-mono text-emerald-200/80 bg-black/20 p-2 rounded-lg inline-flex">
+                                                        <span>⏱️ {transport.data[0].duration}</span>
+                                                        <span>🛣️ {transport.data[0].distance}</span>
+                                                    </div>
+                                                </>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+                            ) : transport.data.length > 0 ? (
+                                transport.data.slice(0,3).map((f, i) => (
+                                    <div key={i} className="bg-black/40 backdrop-blur p-5 rounded-xl border border-white/10 text-white hover:bg-black/60 transition-all cursor-default">
+                                        <div className="flex justify-between items-center">
+                                            <div>
+                                                <div className="font-bold text-lg">{f.validatingAirlineCodes[0]}</div>
+                                                <div className="text-sm text-gray-400">
+                                                    {f.itineraries[0].duration.replace("PT", "").toLowerCase()}
+                                                </div>
+                                            </div>
+                                            <div className="text-right">
+                                                <div className="text-2xl font-bold text-emerald-400">{f.price.currency} {f.price.total}</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))
+                            ) : (
+                                <div className="text-gray-400 bg-black/20 p-6 rounded-xl border border-white/5 text-center">
+                                    No direct transport routes found. Try adjusting your dates.
+                                </div>
+                            )}
+                        </div>
+                    </section>
+
+                    {/* Hotels Section */}
+                    <section>
+                        <h2 className="text-xl font-bold text-white mb-4 flex gap-2"><Hotel className="text-purple-400"/> Top Stays</h2>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {hotels.length > 0 ? hotels.map((h, i) => (
+                                <div key={i} className="bg-black/40 backdrop-blur rounded-xl overflow-hidden border border-white/10 group hover:border-purple-500/50 transition-all cursor-pointer">
+                                    <div className="h-40 overflow-hidden">
+                                        <img src={h.image} alt={h.name} className="h-full w-full object-cover group-hover:scale-110 transition-transform duration-700"/>
+                                    </div>
+                                    <div className="p-4 text-white">
+                                        <h3 className="font-bold truncate text-lg">{h.name}</h3>
+                                        <div className="flex justify-between items-center mt-3">
+                                            <div className="text-sm text-yellow-400 font-bold">★ {h.rating}</div>
+                                            <div className="text-xs bg-white/10 px-3 py-1 rounded-full group-hover:bg-purple-500 transition-colors">View Details</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            )) : (
+                                <div className="col-span-2 text-gray-400 text-center py-10 bg-black/20 rounded-xl border border-white/5">
+                                    No hotel availability found for these dates.
+                                </div>
+                            )}
+                        </div>
+                    </section>
+                </div>
+
+                {/* Right Column: AI Itinerary */}
+                <div className="lg:col-span-1">
+                    <ItineraryTimeline 
+                        destination={destName} 
+                        days={3} 
+                        budget={searchData.budget} 
+                        interests={searchData.interests} 
+                    />
+                </div>
+            </div>
         </div>
       )}
     </DestinationBackground>

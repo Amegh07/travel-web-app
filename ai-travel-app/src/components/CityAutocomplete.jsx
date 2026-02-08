@@ -1,120 +1,121 @@
-import { useState, useRef, useEffect } from 'react';
-import { Search, Loader2, AlertCircle, Plane } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { MapPin, Plane, Loader2, Search } from 'lucide-react';
+import { searchCities } from '../services/api';
 
-const CityAutocomplete = ({ label, onSelect, initialValue = '', error }) => {
-  const [query, setQuery] = useState(initialValue);
+const CityAutocomplete = ({ placeholder, onSelect, initialValue = '', className }) => {
+  const [query, setQuery] = useState('');
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
-  const debounceRef = useRef(null);
+  const wrapperRef = useRef(null);
 
-  // SEARCH LOGIC (With 600ms Debounce to save your API)
-  const handleChange = (text) => {
-    setQuery(text);
+  useEffect(() => {
+    if (initialValue) setQuery(initialValue);
+  }, [initialValue]);
 
-    // Clear old timer
-    if (debounceRef.current) clearTimeout(debounceRef.current);
+  // Handle outside clicks
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (wrapperRef.current && !wrapperRef.current.contains(event.target)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
-    if (text.length < 2) {
-      setResults([]);
-      setIsOpen(false);
-      return;
-    }
-
-    // Wait 600ms (Safe for API limits)
-    debounceRef.current = setTimeout(async () => {
+  // Search API Call
+  useEffect(() => {
+    const timer = setTimeout(async () => {
+      if (query.length < 2) return;
       setLoading(true);
-      setIsOpen(true);
       try {
-        const res = await fetch(`http://localhost:5000/api/city-search?keyword=${text}`);
-        const data = await res.json();
+        const data = await searchCities(query);
         setResults(data || []);
-      } catch {
+      } catch (error) {
         setResults([]);
       } finally {
         setLoading(false);
       }
-    }, 600);
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  const handleInputChange = (e) => {
+    const text = e.target.value;
+    setQuery(text);
+    setIsOpen(true);
+    // ✅ SAFETY CHECK: Only call onSelect if it exists
+    if (onSelect) {
+        onSelect({ name: text, iataCode: text }); 
+    }
   };
 
   const handleSelect = (city) => {
-    // Stop any pending searches
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    
-    setQuery(`${city.name} (${city.iataCode})`);
+    setQuery(city.name);
+    // ✅ SAFETY CHECK
+    if (onSelect) {
+        onSelect(city);
+    }
     setIsOpen(false);
-    onSelect(city);
   };
 
   return (
-    <div className="relative space-y-2">
-      <label className="block text-sm font-semibold text-blue-300">{label}</label>
+    <div ref={wrapperRef} className="w-full relative">
+      <input
+        type="text"
+        value={query}
+        onChange={handleInputChange}
+        onFocus={() => setIsOpen(true)}
+        placeholder={placeholder}
+        className={`w-full bg-transparent outline-none text-white placeholder-slate-400 font-semibold ${className}`}
+        autoComplete="off"
+      />
 
-      <div className="relative z-20"> {/* Input is Z-20 */}
-        <div className="absolute left-4 top-3.5 text-gray-400">
-          <Search size={18} />
-        </div>
-
-        <input
-          value={query}
-          onChange={(e) => handleChange(e.target.value)}
-          onFocus={() => { if (results.length > 0) setIsOpen(true); }}
-          placeholder="Type city (e.g. Kochi)"
-          className={`w-full pl-11 pr-4 py-3 rounded-xl border outline-none text-slate-900 ${
-            error
-              ? 'border-red-300 bg-red-50'
-              : 'border-gray-200 bg-gray-50 focus:ring-2 focus:ring-blue-400'
-          }`}
-        />
-
-        {loading && (
-          <div className="absolute right-4 top-3.5 animate-spin text-blue-500">
-            <Loader2 size={18} />
-          </div>
-        )}
-      </div>
-
-      {/* 🛡️ THE FIX: INVISIBLE WALL & DROPDOWN */}
-      {isOpen && (
-        <>
-          {/* 1. INVISIBLE WALL (Z-30): Detects "Outside Clicks" */}
-          <div 
-            className="fixed inset-0 z-30 bg-transparent cursor-default"
-            onClick={() => setIsOpen(false)}
-          />
-
-          {/* 2. THE DROPDOWN (Z-40): Sits ABOVE the wall */}
-          {results.length > 0 ? (
-            <div className="absolute z-40 w-full bg-white border rounded-xl shadow-xl max-h-60 overflow-y-auto mt-1">
-              {results.map((city, i) => (
-                <button
-                  key={`${city.iataCode}-${i}`}
-                  type="button"
-                  onClick={() => handleSelect(city)}
-                  className="w-full px-4 py-3 text-left hover:bg-blue-50 flex justify-between items-center text-slate-800 border-b border-gray-100 last:border-0 cursor-pointer"
-                >
-                  <div className="flex items-center gap-2">
-                    <Plane size={14} className="text-gray-400"/>
-                    <div>
-                      <p className="font-semibold">{city.name}</p>
-                      <p className="text-xs text-gray-500">{city.city}, {city.country}</p>
-                    </div>
-                  </div>
-                  <span className="text-xs font-mono bg-blue-100 text-blue-800 px-2 py-1 rounded">
-                    {city.iataCode}
-                  </span>
-                </button>
-              ))}
+      {isOpen && query.length > 1 && (
+        <div className="absolute z-50 left-0 right-0 top-full mt-2 bg-slate-900 border border-white/10 rounded-xl shadow-2xl max-h-60 overflow-y-auto custom-scrollbar backdrop-blur-xl">
+          {loading ? (
+            <div className="p-4 text-center text-slate-400 flex items-center justify-center gap-2">
+              <Loader2 size={16} className="animate-spin" /> Searching...
             </div>
           ) : (
-             // No results message (Also Z-40)
-             !loading && (
-               <div className="absolute z-40 w-full bg-white border rounded-xl shadow-xl p-4 text-center text-slate-500 text-sm mt-1">
-                 No cities found.
-               </div>
-             )
+            <>
+              {/* Option 1: Use what I typed */}
+              <button
+                onClick={() => handleSelect({ name: query, iataCode: query })}
+                className="w-full text-left p-3 hover:bg-blue-600/20 transition-colors flex items-center gap-3 border-b border-white/5 bg-slate-800/50"
+              >
+                <div className="bg-emerald-500/20 p-2 rounded-full">
+                    <Search size={14} className="text-emerald-400" />
+                </div>
+                <div>
+                    <div className="font-bold text-white text-sm">{query}</div>
+                    <div className="text-xs text-emerald-400">Search this location</div>
+                </div>
+              </button>
+
+              {/* Option 2: API Results */}
+              {results.map((city, index) => (
+                <button
+                  key={index}
+                  onClick={() => handleSelect(city)}
+                  className="w-full text-left p-3 hover:bg-white/10 transition-colors flex items-center gap-3 border-b border-white/5"
+                >
+                  <div className="bg-white/10 p-2 rounded-full">
+                    {city.subType === 'AIRPORT' ? <Plane size={14} className="text-blue-400" /> : <MapPin size={14} className="text-gray-400" />}
+                  </div>
+                  <div>
+                    <div className="font-bold text-white text-sm">{city.name}</div>
+                    <div className="text-xs text-slate-400 flex gap-2">
+                      <span>{city.address?.countryName}</span>
+                      {city.iataCode && <span className="bg-white/10 px-1 rounded text-white">{city.iataCode}</span>}
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </>
           )}
-        </>
+        </div>
       )}
     </div>
   );
