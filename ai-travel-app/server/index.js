@@ -22,158 +22,170 @@ const amadeus = new Amadeus({
   clientSecret: process.env.AMADEUS_CLIENT_SECRET
 });
 
-// --- 1. UNIVERSAL GEOCODER (Amadeus + OSM) ---
+const GROQ_API_KEY = process.env.GROQ_API_KEY;
+
+// --- 🛠️ HELPER: Resolve City Name to IATA (Fixes "Tokyo" Bug) ---
+async function resolveToIata(keyword) {
+    try {
+        const response = await amadeus.referenceData.locations.get({ keyword, subType: 'CITY' });
+        return response.data?.[0]?.iataCode || null;
+    } catch (e) { return null; }
+}
+
+// --- 🛠️ HELPER: Get Coordinates (For Road Trips) ---
 async function getCoords(location) {
     try {
         const response = await amadeus.referenceData.locations.get({ keyword: location, subType: 'CITY' });
-        if (response.data?.[0]?.geoCode) return response.data[0].geoCode;
+        if (response.data?.[0]?.geoCode) return { ...response.data[0].geoCode, iataCode: response.data[0].iataCode };
     } catch (e) {}
-
     try {
         const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(location)}&format=json&limit=1`;
         const res = await fetch(url, { headers: { 'User-Agent': 'TravexApp/1.0' } });
         const data = await res.json();
-        if (data?.[0]) return { latitude: parseFloat(data[0].lat), longitude: parseFloat(data[0].lon) };
-    } catch (e) { console.error("OSM Error"); }
+        if (data?.[0]) return { latitude: parseFloat(data[0].lat), longitude: parseFloat(data[0].lon), iataCode: null };
+    } catch (e) {}
     return null;
 }
 
-// --- 2. SMART ROUTING ENGINE (OSRM + Math) ---
-async function getRoadTrip(origin, dest) {
+// --- 🧠 GROQ JOURNEY ARCHITECT ---
+async function getJourneyPlan(originName, destName) {
+    if (!GROQ_API_KEY) return null;
+    const prompt = `Decide transport mode from "${originName}" to "${destName}".
+    Rules: 
+    1. If distance < 400km and no ocean, return "road_trip".
+    2. If distance > 400km OR ocean crossing, return "multi_modal".
+    3. For "multi_modal", identify the nearest International Airport IATA code for BOTH.
+    Return JSON: { "type": "road_trip" | "multi_modal", "originHub": "IATA", "destHub": "IATA", "reason": "string" }`;
+
     try {
-        // Try Real OSRM API
-        const url = `http://router.project-osrm.org/route/v1/driving/${origin.longitude},${origin.latitude};${dest.longitude},${dest.latitude}?overview=false`;
-        const res = await fetch(url);
+        const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model: "llama-3.1-8b-instant", messages: [{ role: "user", content: prompt }], response_format: { type: "json_object" } })
+        });
         const data = await res.json();
-        
-        if (data.routes && data.routes.length > 0) {
-            const route = data.routes[0];
-            const hours = Math.floor(route.duration / 3600);
-            const minutes = Math.round((route.duration % 3600) / 60);
-            const km = Math.round(route.distance / 1000);
-            return { duration: `${hours}h ${minutes}m`, distance: `${km} km` };
-        }
-    } catch (e) { console.log("OSM API busy, switching to Math Fallback..."); }
-    return null;
-}
-
-function calculateFallbackRoute(lat1, lon1, lat2, lon2) {
-    // Haversine Formula for "As the crow flies" + 20% road curvature buffer
-    const R = 6371; 
-    const dLat = (lat2 - lat1) * (Math.PI / 180);
-    const dLon = (lon2 - lon1) * (Math.PI / 180);
-    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    const distance = Math.round(R * c * 1.2); // 1.2 buffer for roads
-    
-    const hours = Math.floor(distance / 60); // Assume 60km/h avg
-    const minutes = Math.round(distance % 60);
-    return { duration: `${hours}h ${minutes}m`, distance: `${distance} km` };
-}
-
-// --- 3. AI ENGINE (Gemini) ---
-async function tryGemini(prompt) {
-  if (!process.env.GEMINI_API_KEY) return null;
-  try {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
-    const response = await fetch(url, { 
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, 
-        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }) 
-    });
-    const data = await response.json();
-    return data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || null;
-  } catch (e) { return null; }
-}
-
-async function callHybridAI(prompt, jsonMode = true) {
-    let text = await tryGemini(prompt);
-    if (!text) throw new Error("AI unavailable");
-    try { return jsonMode ? JSON.parse(text.replace(/```json|```/g, "").trim()) : text; }
-    catch (e) { return jsonMode ? [] : text; }
+        return JSON.parse(data.choices[0].message.content);
+    } catch (e) { return null; }
 }
 
 // --- ROUTES ---
 
-// ✈️ 🚗 1. SMART TRANSPORT
+// ✈️ SMART ROUTING (Flights + Road)
 app.get('/api/flights', async (req, res) => {
-  try {
-    const { origin, destination, date } = req.query;
-    if (!origin || !destination) return res.json({ results: [], type: 'none' });
-
-    console.log(`Processing: ${origin} -> ${destination}`);
-
-    // A. FLIGHTS
     try {
-        const flightRes = await amadeus.shopping.flightOffersSearch.get({
-            originLocationCode: origin, destinationLocationCode: destination, departureDate: date, adults: '1', max: '3'
-        });
-        if (flightRes.data && flightRes.data.length > 0) {
-            return res.json({ results: flightRes.data, type: 'flight' });
+        const { origin, destination, date } = req.query;
+        console.log(`🚀 Planning: ${origin} -> ${destination}`);
+
+        let plan = await getJourneyPlan(origin, destination);
+        
+        // FAILSAFE: Manual Resolution if Groq fails
+        if (!plan || !plan.originHub || !plan.destHub) {
+            const [oCode, dCode] = await Promise.all([resolveToIata(origin), resolveToIata(destination)]);
+            plan = { 
+                type: (oCode && dCode) ? "multi_modal" : "road_trip", 
+                originHub: oCode || origin, 
+                destHub: dCode || destination 
+            };
         }
-    } catch (e) {}
 
-    // B. ROAD TRIP (Unbreakable Logic)
-    console.log("⚠️ No flights. Calculating road trip...");
-    const [originCoords, destCoords] = await Promise.all([getCoords(origin), getCoords(destination)]);
+        // 🚗 CASE: ROAD TRIP
+        if (plan.type === 'road_trip') {
+            const [oCoords, dCoords] = await Promise.all([getCoords(origin), getCoords(destination)]);
+            if (oCoords && dCoords) {
+                // Math Distance Calculation
+                const R = 6371; const dLat = (dCoords.latitude - oCoords.latitude) * (Math.PI/180); const dLon = (dCoords.longitude - oCoords.longitude) * (Math.PI/180);
+                const a = Math.sin(dLat/2)*Math.sin(dLat/2) + Math.cos(oCoords.latitude*(Math.PI/180))*Math.cos(dCoords.latitude*(Math.PI/180))*Math.sin(dLon/2)*Math.sin(dLon/2);
+                const dist = Math.round(R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)) * 1.2);
+                const hours = Math.floor(dist/60);
+                return res.json({
+                    type: 'road_trip',
+                    results: [{ message: `Direct drive recommended.`, duration: `${hours}h ${dist%60}m`, distance: `${dist} km` }]
+                });
+            }
+        }
 
-    if (originCoords && destCoords) {
-        let route = await getRoadTrip(originCoords, destCoords);
-        if (!route) route = calculateFallbackRoute(originCoords.latitude, originCoords.longitude, destCoords.latitude, destCoords.longitude);
-
-        return res.json({ 
-            results: [{
-                type: 'road_trip',
-                duration: route.duration,
-                distance: route.distance,
-                message: `No flights found. We calculated a driving route for you.`
-            }], 
-            type: 'road_trip' 
+        // ✈️ CASE: MULTI-MODAL
+        console.log(`Searching Flights: ${plan.originHub} -> ${plan.destHub}`);
+        const flightRes = await amadeus.shopping.flightOffersSearch.get({
+            originLocationCode: plan.originHub, destinationLocationCode: plan.destHub, departureDate: date, adults: '1', max: '3'
         });
+
+        res.json({
+            type: 'multi_modal',
+            results: flightRes.data,
+            journey: { 
+                originHub: plan.originHub, 
+                destHub: plan.destHub, 
+                startRoad: `Drive to ${plan.originHub} Airport`, 
+                endRoad: `Transfer to ${destination}` 
+            }
+        });
+
+    } catch (e) {
+        console.error("Flight Error:", e);
+        res.json({ results: [], type: 'none' });
     }
-
-    res.json({ results: [], type: 'none' });
-
-  } catch (e) { res.json({ results: [], type: 'none' }); }
 });
 
-// 🏨 2. HOTELS
+// 🎉 EVENTS (New Feature!)
+app.post('/api/events', async (req, res) => {
+    try {
+        const { destination, date } = req.body;
+        const prompt = `List 3 major events/activities in ${destination} around ${date}. Return JSON array: [{title, category, description}].`;
+        
+        const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model: "llama-3.1-8b-instant", messages: [{ role: "user", content: prompt }], response_format: { type: "json_object" } })
+        });
+        const data = await response.json();
+        const json = JSON.parse(data.choices[0].message.content);
+        res.json(json.events || json); 
+    } catch (e) { res.json([]); }
+});
+
+// 🏨 HOTELS
 app.get('/api/hotels', async (req, res) => {
     try {
         const { cityCode } = req.query;
-        const r = await amadeus.referenceData.locations.hotels.byCity.get({ cityCode });
-        const hotels = r.data.slice(0, 6).map(h => ({
-            id: h.hotelId, name: h.name, price: "Check Rates", rating: "4.2",
-            image: "https://images.unsplash.com/photo-1566073771259-6a8506099945?w=800"
-        }));
-        res.json(hotels);
+        // Auto-resolve "Tokyo" to "TYO" if needed
+        const code = (cityCode && cityCode.length === 3) ? cityCode : await resolveToIata(cityCode);
+        const r = await amadeus.referenceData.locations.hotels.byCity.get({ cityCode: code || 'COK' });
+        res.json(r.data.slice(0, 4).map(h => ({ id: h.hotelId, name: h.name, rating: "4.5", image: "https://images.unsplash.com/photo-1566073771259-6a8506099945?w=800" })));
     } catch (e) { res.json([]); }
 });
 
-// 📅 3. ITINERARY
+// 📅 ITINERARY GENERATOR
 app.post('/api/itinerary', async (req, res) => {
     try {
-        const prompt = `Create ${req.body.days}-day trip for ${req.body.destination}. Return JSON array.`;
-        const data = await callHybridAI(prompt, true);
-        res.json(data);
-    } catch (e) { res.json([]); }
+        const { destination, days, interests } = req.body;
+        const prompt = `Create a ${days}-day itinerary for ${destination} focusing on ${interests}. Return JSON: { "itinerary": [{ "day": 1, "theme": "string", "activities": [{ "time": "string", "description": "string" }] }] }`;
+        
+        const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model: "llama-3.1-8b-instant", messages: [{ role: "user", content: prompt }], response_format: { type: "json_object" } })
+        });
+        const data = await response.json();
+        res.json(JSON.parse(data.choices[0].message.content));
+    } catch (e) { res.json({ itinerary: [] }); }
 });
 
-// 💬 4. CHAT
+// 💬 CHATBOT
 app.post('/api/chat', async (req, res) => {
-    try { res.json({ reply: await callHybridAI(req.body.message, false) }); }
-    catch (e) { res.json({ reply: "Offline" }); }
+    try {
+        const { message } = req.body;
+        const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model: "llama-3.1-8b-instant", messages: [{ role: "user", content: message }] })
+        });
+        const data = await response.json();
+        res.json({ reply: data.choices[0].message.content });
+    } catch (e) { res.json({ reply: "I'm offline right now." }); }
 });
 
-// 🎒 5. PACKING LIST
-app.post('/api/packing', async (req, res) => {
-    try { 
-        const prompt = `Generate packing list for ${req.body.destination} (${req.body.interests}). Return JSON object with categories.`;
-        const data = await callHybridAI(prompt, true);
-        res.json(data);
-    } catch (e) { res.json({}); }
-});
-
-// 🔍 6. CITY SEARCH
+// 🔍 CITY SEARCH
 app.get('/api/city-search', async (req, res) => {
     try {
         const r = await amadeus.referenceData.locations.get({ keyword: req.query.keyword, subType: 'CITY,AIRPORT' });
@@ -181,4 +193,4 @@ app.get('/api/city-search', async (req, res) => {
     } catch (e) { res.json([]); }
 });
 
-app.listen(PORT, () => console.log(`🔥 Server running on ${PORT}`));
+app.listen(PORT, () => console.log(`🔥 Travex Server running on ${PORT}`));

@@ -1,143 +1,52 @@
-import { useEffect, useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { Clock, MapPin, Sparkles, Loader2, ChevronDown, Calendar } from 'lucide-react';
-import { generateItinerary } from '../services/api'; // ✅ Safe Import
+import React, { useEffect, useState } from 'react';
+import { Calendar, Clock, Loader2, AlertCircle } from 'lucide-react';
+import { generateItinerary } from '../services/api';
 
 const ItineraryTimeline = ({ destination, days, budget, interests }) => {
   const [itinerary, setItinerary] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [expandedDay, setExpandedDay] = useState(0);
-  const [error, setError] = useState(null);
+  const [error, setError] = useState(false);
 
   useEffect(() => {
     const fetchItinerary = async () => {
-      if (!destination) {
-        setLoading(false);
-        return;
-      }
-      
-      setLoading(true);
-      setError(null);
-      
+      setLoading(true); setError(false);
       try {
-        // Prepare data object for API
-        const tripData = { destination, days, budget, interests };
-        const plan = await generateItinerary(tripData);
-        
-        if (plan && Array.isArray(plan) && plan.length > 0) {
-          setItinerary(plan);
-          setExpandedDay(0);
-        } else {
-          throw new Error("Invalid itinerary data");
-        }
-      } catch (err) {
-        console.error("Itinerary Error:", err);
-        setError("Could not generate itinerary. Please try again.");
-      } finally {
-        setLoading(false);
-      }
+        const data = await generateItinerary(destination, days, budget, interests);
+        let cleanData = Array.isArray(data) ? data : (data.itinerary || []);
+        if (!cleanData.length) throw new Error("Empty data");
+        setItinerary(cleanData);
+      } catch (err) { setError(true); } 
+      finally { setLoading(false); }
     };
+    if (destination) fetchItinerary();
+  }, [destination]);
 
-    fetchItinerary();
-  }, [destination, days, budget, interests]);
-
-  if (loading) {
-    return (
-      <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="bg-blue-600 p-2 rounded-lg">
-            <Sparkles size={20} className="text-white" />
-          </div>
-          <h2 className="text-xl font-bold text-white">AI Itinerary</h2>
-        </div>
-        <div className="flex flex-col items-center justify-center py-8 text-gray-400">
-          <Loader2 size={32} className="text-blue-500 mb-3 animate-spin" />
-          <p className="text-sm">Crafting your perfect plan...</p>
-        </div>
-      </div>
-    );
-  }
+  if (loading) return <div className="bg-white/5 p-8 rounded-2xl animate-pulse flex flex-col items-center"><Loader2 className="animate-spin text-blue-400 mb-2" /></div>;
+  if (error) return <div className="bg-red-500/10 p-6 rounded-2xl text-red-200 flex gap-3"><AlertCircle /> Error generating itinerary.</div>;
 
   return (
-    <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6">
-      <div className="flex items-center gap-3 mb-6">
-        <div className="bg-gradient-to-br from-blue-600 to-purple-600 p-2 rounded-lg">
-          <Calendar size={20} className="text-white" />
-        </div>
-        <div>
-          <h2 className="text-xl font-bold text-white">Your Itinerary</h2>
-          <p className="text-sm text-gray-400">{destination} • {itinerary.length} days</p>
-        </div>
-      </div>
-
-      {error && (
-        <div className="bg-red-900/30 border border-red-800 p-3 rounded-lg mb-4 text-sm text-red-300">
-          {error}
-        </div>
-      )}
-
-      <div className="space-y-3">
-        {itinerary.map((day, index) => (
-          <motion.div 
-            key={index}
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: index * 0.1 }}
-            className="border border-gray-800 rounded-xl overflow-hidden"
-          >
-            {/* Day Header */}
-            <button
-              onClick={() => setExpandedDay(expandedDay === index ? -1 : index)}
-              className="w-full flex items-center justify-between p-4 bg-gradient-to-r from-gray-800 to-gray-900 hover:from-gray-750 transition-all"
-            >
-              <div className="flex items-center gap-4">
-                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center font-bold text-sm text-white">
-                  {day.day}
-                </div>
-                <div className="text-left">
-                  <h3 className="font-bold text-white">{day.theme || `Day ${day.day}`}</h3>
-                  <p className="text-xs text-gray-400">{day.activities?.length || 0} activities</p>
-                </div>
-              </div>
-              <ChevronDown 
-                size={20} 
-                className={`text-gray-400 transition-transform ${expandedDay === index ? 'rotate-180' : ''}`} 
-              />
-            </button>
-
-            {/* Expandable Activities */}
-            <AnimatePresence>
-              {expandedDay === index && (
-                <motion.div
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: 'auto', opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  className="overflow-hidden"
-                >
-                  <div className="p-4 bg-black/30 space-y-3">
-                    {day.activities?.map((activity, i) => (
-                      <div key={i} className="flex items-start gap-3">
-                        <div className="w-6 h-6 rounded-full bg-blue-500/20 flex items-center justify-center flex-shrink-0 mt-0.5">
-                          <Clock size={14} className="text-blue-400" />
-                        </div>
-                        <div className="flex-1">
-                            {activity.time && <p className="text-xs text-blue-300 font-bold mb-0.5">{activity.time}</p>}
-                            <p className="text-gray-300 text-sm leading-relaxed">
-                              {typeof activity === 'string' ? activity : activity.description || "Activity details"}
-                            </p>
-                            {activity.location && <p className="text-xs text-gray-500 mt-1 flex items-center gap-1"><MapPin size={10}/> {activity.location}</p>}
-                        </div>
-                      </div>
-                    ))}
+    <div className="bg-slate-900/60 p-6 rounded-[2rem] border border-white/10 backdrop-blur-md shadow-xl">
+      <h2 className="text-2xl font-bold text-white mb-6 flex justify-between items-center">Your Plan <Calendar className="text-blue-500"/></h2>
+      <div className="relative border-l-2 border-white/10 ml-3 space-y-8 pl-8 pb-4">
+        {itinerary.map((day, idx) => (
+          <div key={idx} className="relative">
+            <div className="absolute -left-[41px] top-0 bg-slate-900 border-2 border-blue-500 w-6 h-6 rounded-full flex items-center justify-center z-10"><div className="w-2 h-2 bg-blue-400 rounded-full" /></div>
+            <div className="bg-black/20 p-5 rounded-2xl border border-white/5">
+              <h3 className="text-lg font-bold text-blue-200 mb-1">Day {day?.day || idx + 1}</h3>
+              <div className="text-white font-medium mb-4">{day?.theme}</div>
+              <div className="space-y-4">
+                {(day?.activities || []).map((act, i) => (
+                  <div key={i} className="flex gap-4 items-start">
+                    <div className="bg-white/5 p-2 rounded-lg mt-1"><Clock size={14} className="text-slate-400"/></div>
+                    <div><div className="text-slate-400 text-xs font-bold">{act?.time}</div><div className="text-slate-200">{act?.description}</div></div>
                   </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </motion.div>
+                ))}
+              </div>
+            </div>
+          </div>
         ))}
       </div>
     </div>
   );
 };
-
 export default ItineraryTimeline;

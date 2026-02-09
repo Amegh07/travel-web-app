@@ -1,149 +1,56 @@
-import { useState, useRef, useEffect } from 'react';
-import { Sparkles, Loader2, Send, X, MessageCircle, MapPin, Utensils, Camera, Wallet } from 'lucide-react';
-import { chatWithAI } from '../services/api'; // ✅ Safe Import
+import React, { useState, useRef, useEffect } from 'react';
+import { MessageCircle, X, Send, Loader2, Sparkles } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { chatWithAI } from '../services/api';
 
 const ChatBot = ({ destination }) => {
   const [isOpen, setIsOpen] = useState(false);
-  const [messages, setMessages] = useState([
-    { id: 1, text: `Hi! I'm your AI assistant. Ask me anything about ${destination || 'your trip'}!`, sender: 'bot' }
-  ]);
-  const [inputText, setInputText] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
-  const messagesEndRef = useRef(null);
+  const [messages, setMessages] = useState([{ role: 'assistant', text: `Hi! I'm Travex AI. Ask me anything about ${destination || "your trip"}!` }]);
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
+  const scrollRef = useRef(null);
 
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, isOpen]);
+  useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
-  const suggestions = [
-    { label: "Must-visit spots?", icon: <MapPin size={14} />, text: `What are the top 3 must-visit attractions in ${destination}?` },
-    { label: "Best local food?", icon: <Utensils size={14} />, text: `What is the most famous local food in ${destination} and where should I try it?` },
-    { label: "Hidden gems?", icon: <Camera size={14} />, text: `Tell me about some hidden gems in ${destination}.` },
-    { label: "Budget tips?", icon: <Wallet size={14} />, text: `Give me some budget-saving travel tips for ${destination}.` },
-  ];
+  const handleSend = async () => {
+    if (!input.trim()) return;
+    const userMsg = { role: 'user', text: input };
+    setMessages(prev => [...prev, userMsg]);
+    setInput("");
+    setLoading(true);
 
-  const handleSendMessage = async (textOverride = null) => {
-    const textToSend = textOverride || inputText;
-    if (!textToSend.trim()) return;
-
-    const userMessage = { id: Date.now(), text: textToSend, sender: 'user' };
-    setMessages(prev => [...prev, userMessage]);
-    setInputText("");
-    setIsLoading(true);
-
-    try {
-      const aiReplyText = await chatWithAI(textToSend, messages);
-      const botMessage = { id: Date.now() + 1, text: aiReplyText, sender: 'bot' };
-      setMessages(prev => [...prev, botMessage]);
-    } catch (error) {
-      console.error("Chat Error:", error);
-      const errorMessage = { id: Date.now() + 1, text: "Sorry, I couldn't reach the server.", sender: 'bot' };
-      setMessages(prev => [...prev, errorMessage]);
-    } finally {
-      setIsLoading(false);
-    }
+    const data = await chatWithAI(`Context: User is planning trip to ${destination}. Question: ${input}`);
+    setMessages(prev => [...prev, { role: 'assistant', text: data.reply }]);
+    setLoading(false);
   };
 
   return (
-    <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end font-sans">
-      {/* CHAT WINDOW */}
-      {isOpen && (
-        <div className="mb-4 w-[340px] md:w-[400px] bg-white rounded-2xl shadow-2xl border border-gray-100 overflow-hidden flex flex-col max-h-[600px]">
-            {/* Header */}
-            <div className="bg-gradient-to-r from-blue-600 to-indigo-600 p-4 flex justify-between items-center text-white shadow-md">
-              <div className="flex items-center gap-2">
-                <div className="bg-white/20 p-2 rounded-full backdrop-blur-sm">
-                  <Sparkles size={18} className="text-yellow-300" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-sm">Voyager Assistant</h3>
-                  <p className="text-[10px] text-blue-100 opacity-90">Online • Helping you explore</p>
-                </div>
-              </div>
-              <button onClick={() => setIsOpen(false)} className="hover:bg-white/10 p-1.5 rounded-lg transition-colors">
-                <X size={20} />
-              </button>
+    <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end">
+      <AnimatePresence>
+        {isOpen && (
+          <motion.div initial={{ opacity: 0, y: 20, scale: 0.9 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 20, scale: 0.9 }} className="bg-slate-900 border border-white/10 w-80 h-96 rounded-2xl shadow-2xl overflow-hidden flex flex-col mb-4">
+            <div className="bg-gradient-to-r from-blue-600 to-purple-600 p-4 flex justify-between items-center">
+              <h3 className="text-white font-bold flex items-center gap-2"><Sparkles size={16}/> Travex AI</h3>
+              <button onClick={() => setIsOpen(false)} className="text-white/80 hover:text-white"><X size={18}/></button>
             </div>
-
-            {/* Messages Area */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50 min-h-[350px]">
-              {messages.map((msg) => (
-                <div key={msg.id} className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
-                  {msg.sender === 'bot' && (
-                    <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-full flex items-center justify-center text-white text-xs mr-2 mt-1 shadow-sm shrink-0">
-                      AI
-                    </div>
-                  )}
-                  <div className={`max-w-[80%] p-3.5 rounded-2xl text-sm leading-relaxed shadow-sm ${
-                    msg.sender === 'user' 
-                    ? 'bg-blue-600 text-white rounded-br-none' 
-                    : 'bg-white text-gray-700 border border-gray-200 rounded-bl-none'
-                  }`}>
-                    {msg.text}
-                  </div>
+            <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
+              {messages.map((m, i) => (
+                <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  <div className={`max-w-[85%] p-3 rounded-xl text-sm ${m.role === 'user' ? 'bg-blue-600 text-white' : 'bg-white/10 text-slate-200'}`}>{m.text}</div>
                 </div>
               ))}
-              
-              {isLoading && (
-                <div className="flex justify-start">
-                  <div className="w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center mr-2 shrink-0 animate-pulse">...</div>
-                  <div className="bg-white p-3 rounded-2xl border border-gray-200 rounded-bl-none shadow-sm flex items-center gap-2 text-gray-400 text-xs">
-                    <Loader2 size={14} className="animate-spin" /> Thinking...
-                  </div>
-                </div>
-              )}
-              <div ref={messagesEndRef} />
+              {loading && <div className="flex justify-start"><div className="bg-white/10 p-3 rounded-xl"><Loader2 className="animate-spin text-white" size={16}/></div></div>}
+              <div ref={scrollRef}/>
             </div>
-
-            {/* Suggestion Chips */}
-            {!isLoading && (
-              <div className="bg-gray-50 px-4 pb-2 flex gap-2 overflow-x-auto scrollbar-hide py-2">
-                {suggestions.map((s, idx) => (
-                  <button
-                    key={idx}
-                    onClick={() => handleSendMessage(s.text)}
-                    className="flex items-center gap-1.5 whitespace-nowrap px-3 py-1.5 bg-white border border-blue-100 text-blue-600 text-xs font-medium rounded-full hover:bg-blue-50 hover:border-blue-200 transition-all shadow-sm"
-                  >
-                    {s.icon} {s.label}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {/* Input Area */}
-            <div className="p-3 bg-white border-t border-gray-100">
-              <div className="flex items-center gap-2 bg-gray-50 p-2 rounded-full border border-gray-200 focus-within:ring-2 focus-within:ring-blue-100 focus-within:border-blue-300 transition-all">
-                <input
-                  type="text"
-                  placeholder="Ask for travel tips..."
-                  className="flex-1 bg-transparent border-none focus:ring-0 text-sm px-2 outline-none text-gray-700"
-                  value={inputText}
-                  onChange={(e) => setInputText(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
-                  disabled={isLoading}
-                />
-                <button 
-                  onClick={() => handleSendMessage()}
-                  disabled={isLoading || !inputText.trim()}
-                  className={`p-2 rounded-full text-white transition-all shadow-md ${
-                    isLoading || !inputText.trim() 
-                    ? 'bg-gray-300 shadow-none cursor-not-allowed' 
-                    : 'bg-blue-600 hover:bg-blue-700 hover:scale-105 active:scale-95'
-                  }`}
-                >
-                  <Send size={16} />
-                </button>
-              </div>
+            <div className="p-3 bg-black/20 border-t border-white/5 flex gap-2">
+              <input type="text" value={input} onChange={(e) => setInput(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && handleSend()} placeholder="Ask about food, spots..." className="flex-1 bg-transparent text-white text-sm outline-none placeholder-slate-500"/>
+              <button onClick={handleSend} disabled={loading} className="text-blue-400 hover:text-blue-300"><Send size={18}/></button>
             </div>
-        </div>
-      )}
-
-      {/* Floating Button */}
-      <button
-        onClick={() => setIsOpen(!isOpen)}
-        className="group bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white p-4 rounded-full shadow-lg transition-all hover:scale-110 active:scale-95 flex items-center justify-center relative"
-      >
-        {isOpen ? <X size={24} /> : <MessageCircle size={24} />}
+          </motion.div>
+        )}
+      </AnimatePresence>
+      <button onClick={() => setIsOpen(!isOpen)} className="bg-gradient-to-r from-blue-600 to-purple-600 p-4 rounded-full shadow-lg text-white hover:scale-110 transition-transform">
+        {isOpen ? <X size={24}/> : <MessageCircle size={24}/>}
       </button>
     </div>
   );
