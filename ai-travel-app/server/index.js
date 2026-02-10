@@ -1,196 +1,183 @@
 import express from 'express';
 import cors from 'cors';
-import Amadeus from 'amadeus';
 import dotenv from 'dotenv';
-import path from 'path';
-import fetch from 'node-fetch'; 
-import { fileURLToPath } from 'url';
+import { runAgent, AgentRole, keyManager } from './smartRouter.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-dotenv.config({ path: path.join(__dirname, '.env') });
-dotenv.config({ path: path.join(__dirname, '../.env') });
+// Load secrets
+dotenv.config();
 
 const app = express();
-const PORT = 5000;
+const PORT = process.env.PORT || 5000;
 
-app.use(cors({ origin: ['http://localhost:5173', 'http://localhost:5174'], credentials: true }));
+// --- MIDDLEWARE ---
+app.use(cors({ origin: '*' })); // Allow Frontend to talk to Backend
 app.use(express.json());
 
-const amadeus = new Amadeus({
-  clientId: process.env.AMADEUS_CLIENT_ID,
-  clientSecret: process.env.AMADEUS_CLIENT_SECRET
+// 📝 DEBUGGER: Log every request
+app.use((req, res, next) => {
+    console.log(`\n📥 [${req.method}] ${req.url}`);
+    next();
 });
 
-const GROQ_API_KEY = process.env.GROQ_API_KEY;
-
-// --- 🛠️ HELPER: Resolve City Name to IATA (Fixes "Tokyo" Bug) ---
+// --- 🛠️ HELPER: IATA Code Resolution ---
 async function resolveToIata(keyword) {
+    if (!keyword || keyword.length === 3) return keyword?.toUpperCase();
     try {
-        const response = await amadeus.referenceData.locations.get({ keyword, subType: 'CITY' });
-        return response.data?.[0]?.iataCode || null;
-    } catch (e) { return null; }
-}
-
-// --- 🛠️ HELPER: Get Coordinates (For Road Trips) ---
-async function getCoords(location) {
-    try {
-        const response = await amadeus.referenceData.locations.get({ keyword: location, subType: 'CITY' });
-        if (response.data?.[0]?.geoCode) return { ...response.data[0].geoCode, iataCode: response.data[0].iataCode };
-    } catch (e) {}
-    try {
-        const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(location)}&format=json&limit=1`;
-        const res = await fetch(url, { headers: { 'User-Agent': 'TravexApp/1.0' } });
-        const data = await res.json();
-        if (data?.[0]) return { latitude: parseFloat(data[0].lat), longitude: parseFloat(data[0].lon), iataCode: null };
-    } catch (e) {}
-    return null;
-}
-
-// --- 🧠 GROQ JOURNEY ARCHITECT ---
-async function getJourneyPlan(originName, destName) {
-    if (!GROQ_API_KEY) return null;
-    const prompt = `Decide transport mode from "${originName}" to "${destName}".
-    Rules: 
-    1. If distance < 400km and no ocean, return "road_trip".
-    2. If distance > 400km OR ocean crossing, return "multi_modal".
-    3. For "multi_modal", identify the nearest International Airport IATA code for BOTH.
-    Return JSON: { "type": "road_trip" | "multi_modal", "originHub": "IATA", "destHub": "IATA", "reason": "string" }`;
-
-    try {
-        const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ model: "llama-3.1-8b-instant", messages: [{ role: "user", content: prompt }], response_format: { type: "json_object" } })
+        console.log(`   🔎 Resolving City: "${keyword}"...`);
+        const client = keyManager.getAmadeusClient("FLIGHTS");
+        const response = await client.referenceData.locations.get({
+            keyword,
+            subType: 'CITY,AIRPORT'
         });
-        const data = await res.json();
-        return JSON.parse(data.choices[0].message.content);
-    } catch (e) { return null; }
+        const code = response.data?.[0]?.iataCode;
+        console.log(`   ✅ Resolved: ${code}`);
+        return code || keyword.substring(0, 3).toUpperCase();
+    } catch (e) {
+        console.warn(`   ⚠️ IATA Resolve Failed for ${keyword}: ${e.message}`);
+        return keyword.substring(0, 3).toUpperCase();
+    }
 }
 
-// --- ROUTES ---
-
-// ✈️ SMART ROUTING (Flights + Road)
+// --- ✈️ ROUTE 1: FLIGHT SEARCH ---
 app.get('/api/flights', async (req, res) => {
     try {
         const { origin, destination, date } = req.query;
-        console.log(`🚀 Planning: ${origin} -> ${destination}`);
+        console.log(`✈️  Starting Flight Search: ${origin} -> ${destination} on ${date}`);
 
-        let plan = await getJourneyPlan(origin, destination);
+        const originCode = await resolveToIata(origin);
+        const destCode = await resolveToIata(destination);
+
+        const amadeus = keyManager.getAmadeusClient("FLIGHTS");
+        const response = await amadeus.shopping.flightOffersSearch.get({
+            originLocationCode: originCode,
+            destinationLocationCode: destCode,
+            departureDate: date,
+            adults: '1',
+            max: '5'
+        });
+
+        console.log(`   ✅ Success! Found ${response.data.length} flights.`);
         
-        // FAILSAFE: Manual Resolution if Groq fails
-        if (!plan || !plan.originHub || !plan.destHub) {
-            const [oCode, dCode] = await Promise.all([resolveToIata(origin), resolveToIata(destination)]);
-            plan = { 
-                type: (oCode && dCode) ? "multi_modal" : "road_trip", 
-                originHub: oCode || origin, 
-                destHub: dCode || destination 
-            };
-        }
-
-        // 🚗 CASE: ROAD TRIP
-        if (plan.type === 'road_trip') {
-            const [oCoords, dCoords] = await Promise.all([getCoords(origin), getCoords(destination)]);
-            if (oCoords && dCoords) {
-                // Math Distance Calculation
-                const R = 6371; const dLat = (dCoords.latitude - oCoords.latitude) * (Math.PI/180); const dLon = (dCoords.longitude - oCoords.longitude) * (Math.PI/180);
-                const a = Math.sin(dLat/2)*Math.sin(dLat/2) + Math.cos(oCoords.latitude*(Math.PI/180))*Math.cos(dCoords.latitude*(Math.PI/180))*Math.sin(dLon/2)*Math.sin(dLon/2);
-                const dist = Math.round(R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)) * 1.2);
-                const hours = Math.floor(dist/60);
-                return res.json({
-                    type: 'road_trip',
-                    results: [{ message: `Direct drive recommended.`, duration: `${hours}h ${dist%60}m`, distance: `${dist} km` }]
-                });
-            }
-        }
-
-        // ✈️ CASE: MULTI-MODAL
-        console.log(`Searching Flights: ${plan.originHub} -> ${plan.destHub}`);
-        const flightRes = await amadeus.shopping.flightOffersSearch.get({
-            originLocationCode: plan.originHub, destinationLocationCode: plan.destHub, departureDate: date, adults: '1', max: '3'
+        res.json({ 
+            type: 'multi_modal', 
+            results: response.data,
+            journey: { originHub: originCode, destHub: destCode }
         });
 
-        res.json({
-            type: 'multi_modal',
-            results: flightRes.data,
-            journey: { 
-                originHub: plan.originHub, 
-                destHub: plan.destHub, 
-                startRoad: `Drive to ${plan.originHub} Airport`, 
-                endRoad: `Transfer to ${destination}` 
-            }
-        });
-
-    } catch (e) {
-        console.error("Flight Error:", e);
-        res.json({ results: [], type: 'none' });
+    } catch (error) {
+        console.error("❌ FLIGHT API FAILED:");
+        if (error.response) {
+            console.error("   Status:", error.response.statusCode);
+            console.error("   Details:", error.response.result?.errors?.[0]?.detail);
+        } else {
+            console.error("   System Error:", error.message);
+        }
+        res.json({ type: 'none', results: [] });
     }
 });
 
-// 🎉 EVENTS (New Feature!)
-app.post('/api/events', async (req, res) => {
-    try {
-        const { destination, date } = req.body;
-        const prompt = `List 3 major events/activities in ${destination} around ${date}. Return JSON array: [{title, category, description}].`;
-        
-        const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ model: "llama-3.1-8b-instant", messages: [{ role: "user", content: prompt }], response_format: { type: "json_object" } })
-        });
-        const data = await response.json();
-        const json = JSON.parse(data.choices[0].message.content);
-        res.json(json.events || json); 
-    } catch (e) { res.json([]); }
-});
-
-// 🏨 HOTELS
+// --- 🏨 ROUTE 2: HOTEL SEARCH (FIXED) ---
 app.get('/api/hotels', async (req, res) => {
     try {
-        const { cityCode } = req.query;
-        // Auto-resolve "Tokyo" to "TYO" if needed
-        const code = (cityCode && cityCode.length === 3) ? cityCode : await resolveToIata(cityCode);
-        const r = await amadeus.referenceData.locations.hotels.byCity.get({ cityCode: code || 'COK' });
-        res.json(r.data.slice(0, 4).map(h => ({ id: h.hotelId, name: h.name, rating: "4.5", image: "https://images.unsplash.com/photo-1566073771259-6a8506099945?w=800" })));
-    } catch (e) { res.json([]); }
-});
+        // 🔥 FIX: Accept 'destination' OR 'cityCode'
+        // This handles both Frontend formats automatically
+        const targetCity = req.query.destination || req.query.cityCode;
 
-// 📅 ITINERARY GENERATOR
-app.post('/api/itinerary', async (req, res) => {
-    try {
-        const { destination, days, interests } = req.body;
-        const prompt = `Create a ${days}-day itinerary for ${destination} focusing on ${interests}. Return JSON: { "itinerary": [{ "day": 1, "theme": "string", "activities": [{ "time": "string", "description": "string" }] }] }`;
+        console.log(`🏨 Searching Hotels for: ${targetCity}`);
         
-        const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ model: "llama-3.1-8b-instant", messages: [{ role: "user", content: prompt }], response_format: { type: "json_object" } })
+        if (!targetCity) {
+            console.error("❌ Missing destination parameter");
+            return res.json([]);
+        }
+        
+        // Use the resolved IATA code for better accuracy
+        const cityCode = await resolveToIata(targetCity);
+        const amadeus = keyManager.getAmadeusClient("HOTELS");
+
+        const response = await amadeus.referenceData.locations.hotels.byCity.get({
+            cityCode: cityCode,
+            radius: 10,
+            radiusUnit: 'KM'
         });
-        const data = await response.json();
-        res.json(JSON.parse(data.choices[0].message.content));
-    } catch (e) { res.json({ itinerary: [] }); }
+
+        console.log(`   ✅ Found ${response.data.length} hotels.`);
+
+        const hotels = response.data.slice(0, 6).map(h => ({
+            id: h.hotelId,
+            name: h.name,
+            image: `https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&w=800&q=80`,
+            rating: "4.5",
+            price: "$200"
+        }));
+
+        res.json(hotels);
+
+    } catch (error) {
+        console.error("❌ HOTEL API FAILED:", error.message);
+        res.json([]);
+    }
 });
 
-// 💬 CHATBOT
-app.post('/api/chat', async (req, res) => {
-    try {
-        const { message } = req.body;
-        const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ model: "llama-3.1-8b-instant", messages: [{ role: "user", content: message }] })
-        });
-        const data = await response.json();
-        res.json({ reply: data.choices[0].message.content });
-    } catch (e) { res.json({ reply: "I'm offline right now." }); }
-});
-
-// 🔍 CITY SEARCH
+// --- 🔍 ROUTE 3: CITY AUTOCOMPLETE ---
 app.get('/api/city-search', async (req, res) => {
     try {
-        const r = await amadeus.referenceData.locations.get({ keyword: req.query.keyword, subType: 'CITY,AIRPORT' });
-        res.json(r.data);
-    } catch (e) { res.json([]); }
+        const { keyword } = req.query;
+        if (!keyword) return res.json([]);
+        
+        const client = keyManager.getAmadeusClient("FLIGHTS");
+        const response = await client.referenceData.locations.get({
+            keyword,
+            subType: 'CITY,AIRPORT'
+        });
+        res.json(response.data);
+    } catch (e) {
+        res.json([]); 
+    }
 });
 
-app.listen(PORT, () => console.log(`🔥 Travex Server running on ${PORT}`));
+// --- 🎫 ROUTE 4: AI EVENTS ---
+app.post('/api/events', async (req, res) => {
+    try {
+        console.log("🎫 AI Agent: Finding Events...");
+        const { destination, date } = req.body;
+        const systemPrompt = "You are a local guide. Return strict JSON array: [{ id, title, category, description }]";
+        const userContent = `Find 3 events in ${destination} for ${date}.`;
+        const result = await runAgent(AgentRole.GUIDE, systemPrompt, userContent);
+        res.json(JSON.parse(result));
+    } catch (error) {
+        console.error("❌ Events Agent Failed:", error.message);
+        res.json([]); 
+    }
+});
+
+// --- 🤖 ROUTE 5: AI ITINERARY ---
+app.post('/api/itinerary', async (req, res) => {
+    try {
+        console.log("🤖 AI Architect: Building Itinerary...");
+        const { destination, days, interests } = req.body;
+        const systemPrompt = `You are a travel architect. Return strict JSON.`;
+        const userContent = `Create a ${days}-day trip to ${destination}. Interests: ${interests}. Format: { "itinerary": [{ "day": 1, "theme": "string", "activities": [...] }] }`;
+        const result = await runAgent(AgentRole.ARCHITECT, systemPrompt, userContent);
+        res.json(JSON.parse(result));
+    } catch (error) {
+        res.status(500).json({ error: "AI Busy" });
+    }
+});
+
+// --- 🚚 ROUTE 6: LOGISTICS ---
+app.post('/api/logistics', async (req, res) => {
+    try {
+        const { flight, hotel } = req.body;
+        const systemPrompt = "Logistics Engine. Return JSON: { distance, duration, method, traffic_note, routeUrl }";
+        const userContent = `From Airport to ${hotel.name}.`;
+        const result = await runAgent(AgentRole.TRANSFER, systemPrompt, userContent);
+        res.json(JSON.parse(result));
+    } catch (error) {
+        res.json({ distance: "20km", duration: "30min", method: "Taxi", routeUrl: "#" });
+    }
+});
+
+app.listen(PORT, () => {
+    console.log(`\n✅ Travex Server Running on http://localhost:${PORT}`);
+    console.log(`📝 Debug Mode: ACTIVATED`);
+});
