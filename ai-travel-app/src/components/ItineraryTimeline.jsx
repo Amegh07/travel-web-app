@@ -1,47 +1,49 @@
-import React, { useEffect, useState } from 'react';
-import { Calendar, Clock, Loader2, AlertCircle } from 'lucide-react';
-import { generateItinerary } from '../services/api';
+import React from 'react';
+import { Clock, MapPin, Coffee, Camera, Navigation } from 'lucide-react';
 
-const ItineraryTimeline = ({ destination, days, budget, interests }) => {
-  const [itinerary, setItinerary] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
-
-  useEffect(() => {
-    const fetchItinerary = async () => {
-      setLoading(true); setError(false);
-      try {
-        const data = await generateItinerary(destination, days, budget, interests);
-        let cleanData = Array.isArray(data) ? data : (data.itinerary || []);
-        if (!cleanData.length) throw new Error("Empty data");
-        setItinerary(cleanData);
-      } catch (err) { setError(true); } 
-      finally { setLoading(false); }
-    };
-    if (destination) fetchItinerary();
-  }, [destination]);
-
-  if (loading) return <div className="bg-white/5 p-8 rounded-2xl animate-pulse flex flex-col items-center"><Loader2 className="animate-spin text-blue-400 mb-2" /></div>;
-  if (error) return <div className="bg-red-500/10 p-6 rounded-2xl text-red-200 flex gap-3"><AlertCircle /> Error generating itinerary.</div>;
+const ItineraryTimeline = ({ plan }) => {
+  if (!plan || !plan.daily_plan) return <div className="text-slate-500">No plan generated yet.</div>;
 
   return (
-    <div className="bg-slate-900/60 p-6 rounded-[2rem] border border-white/10 backdrop-blur-md shadow-xl">
-      <h2 className="text-2xl font-bold text-white mb-6 flex justify-between items-center">Your Plan <Calendar className="text-blue-500"/></h2>
-      <div className="relative border-l-2 border-white/10 ml-3 space-y-8 pl-8 pb-4">
-        {itinerary.map((day, idx) => (
-          <div key={idx} className="relative">
-            <div className="absolute -left-[41px] top-0 bg-slate-900 border-2 border-blue-500 w-6 h-6 rounded-full flex items-center justify-center z-10"><div className="w-2 h-2 bg-blue-400 rounded-full" /></div>
-            <div className="bg-black/20 p-5 rounded-2xl border border-white/5">
-              <h3 className="text-lg font-bold text-blue-200 mb-1">Day {day?.day || idx + 1}</h3>
-              <div className="text-white font-medium mb-4">{day?.theme}</div>
-              <div className="space-y-4">
-                {(day?.activities || []).map((act, i) => (
-                  <div key={i} className="flex gap-4 items-start">
-                    <div className="bg-white/5 p-2 rounded-lg mt-1"><Clock size={14} className="text-slate-400"/></div>
-                    <div><div className="text-slate-400 text-xs font-bold">{act?.time}</div><div className="text-slate-200">{act?.description}</div></div>
+    <div className="space-y-8 animate-fade-in">
+      {/* Header */}
+      <div className="bg-gradient-to-r from-purple-900/50 to-blue-900/50 p-6 rounded-3xl border border-white/10">
+        <h2 className="text-2xl font-bold text-white mb-1">{plan.trip_name}</h2>
+        <div className="text-sm text-purple-200 uppercase tracking-wider font-bold">AI Architect Design</div>
+      </div>
+
+      {/* Days Loop */}
+      <div className="space-y-12">
+        {plan.daily_plan.map((day, i) => (
+          <div key={i} className="relative pl-8 border-l border-white/10">
+            {/* Day Marker */}
+            <div className="absolute -left-3 top-0 w-6 h-6 bg-cyan-500 rounded-full border-4 border-[#020617] shadow-lg shadow-cyan-500/50"></div>
+            
+            <h3 className="text-xl font-bold text-white mb-2">Day {day.day}: {day.theme}</h3>
+            <p className="text-slate-400 text-sm mb-6">{day.date}</p>
+
+            {/* Activities */}
+            <div className="space-y-4">
+              {day.activities.map((act, j) => (
+                <div key={j} className="bg-white/5 hover:bg-white/10 p-4 rounded-2xl border border-white/5 transition-colors flex gap-4 group">
+                  <div className="text-slate-400 font-mono text-xs pt-1 w-12">{act.time}</div>
+                  <div className="flex-1">
+                    <div className="font-bold text-white group-hover:text-cyan-300 transition-colors">
+                      {act.activity}
+                    </div>
+                    
+                    <div className="flex items-center gap-3 mt-2 text-xs">
+                      {act.type === 'food' && <span className="flex items-center gap-1 text-orange-400"><Coffee size={12}/> Food</span>}
+                      {act.type === 'sightseeing' && <span className="flex items-center gap-1 text-purple-400"><Camera size={12}/> Sightseeing</span>}
+                      {act.type === 'logistics' && <span className="flex items-center gap-1 text-blue-400"><Navigation size={12}/> Logistics</span>}
+                      
+                      {act.cost_estimate > 0 && (
+                        <span className="text-emerald-400 font-mono ml-auto">Est. ${act.cost_estimate}</span>
+                      )}
+                    </div>
                   </div>
-                ))}
-              </div>
+                </div>
+              ))}
             </div>
           </div>
         ))}
@@ -49,4 +51,5 @@ const ItineraryTimeline = ({ destination, days, budget, interests }) => {
     </div>
   );
 };
+
 export default ItineraryTimeline;

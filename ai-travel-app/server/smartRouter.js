@@ -4,31 +4,34 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-// --- 1. CONFIGURATION & ROLES ---
-export const AgentRole = {
-  ARCHITECT: "ARCHITECT",
-  TRANSFER: "TRANSFER",
-  CONCIERGE: "CONCIERGE",
-  GUIDE: "GUIDE",
-  CFO: "CFO",
+// --- 1. MODEL CONFIGURATION ---
+// Defines which brain to use for which task
+const ModelConfig = {
+  PLANNER:   "llama-3.3-70b-versatile", // The "Big Brain" (Architect & Mapping)
+  FAST:      "llama-3.1-8b-instant",    // The "Speedy Assistant" (Guide, CFO, Router)
 };
 
+export const AgentRole = {
+  ARCHITECT: "ARCHITECT", // Uses PLANNER model
+  MAPPING:   "MAPPING",   // Uses PLANNER model
+  GUIDE:     "GUIDE",     // Uses FAST model
+  CFO:       "CFO",       // Uses FAST model
+  ROUTER:    "ROUTER",    // Uses FAST model
+};
+
+// Helper to safely get keys
 const getEnvVar = (key) => {
   const value = process.env[key];
-  if (!value) console.warn(`⚠️ Missing Key: ${key}`);
+  if (!value) console.warn(`⚠️ Missing Environment Variable: ${key}`);
   return value;
 };
 
-// ... [Keep Key Arrays & KeyManager Class exactly as before] ...
-// (I am skipping the KeyManager code block here to save space, 
-// KEEP the KeyManager class you already pasted!)
-
+// Key definitions
 const GROQ_KEYS = [
-  { id: "groq-a", key: getEnvVar("GROQ_KEY_A"), roles: [AgentRole.ARCHITECT], tier: 1 },
-  { id: "groq-b", key: getEnvVar("GROQ_KEY_B"), roles: [AgentRole.TRANSFER], tier: 1 },
-  { id: "groq-c", key: getEnvVar("GROQ_KEY_C"), roles: [AgentRole.CONCIERGE], tier: 2 },
-  { id: "groq-d", key: getEnvVar("GROQ_KEY_D"), roles: [AgentRole.GUIDE], tier: 2 },
-  { id: "groq-e", key: getEnvVar("GROQ_KEY_E"), roles: [AgentRole.CFO], tier: 3, isReserve: true },
+  { id: "groq-a", key: getEnvVar("GROQ_KEY_A"), roles: [AgentRole.ARCHITECT, AgentRole.MAPPING], tier: 1 },
+  { id: "groq-b", key: getEnvVar("GROQ_KEY_B"), roles: [AgentRole.GUIDE, AgentRole.ROUTER], tier: 1 },
+  { id: "groq-c", key: getEnvVar("GROQ_KEY_C"), roles: [AgentRole.CFO], tier: 2 },
+  { id: "groq-reserve", key: getEnvVar("GROQ_KEY_D"), roles: [], tier: 3, isReserve: true },
 ];
 
 const AMADEUS_KEYS = [
@@ -36,20 +39,24 @@ const AMADEUS_KEYS = [
   { id: "ama-2", clientId: getEnvVar("AMA_ID_2"), clientSecret: getEnvVar("AMA_SEC_2"), scope: "HOTELS" },
 ];
 
+// --- 2. KEY MANAGER ---
 class KeyManager {
   constructor() {
     this.keyHealth = new Map();
-    this.MAX_ERRORS = 3;
     GROQ_KEYS.forEach((k) => this.keyHealth.set(k.id, { errors: 0, isBlocked: false }));
   }
 
   getGroqClient(role) {
+    // Find a key assigned to this role
     const primary = GROQ_KEYS.find((k) => k.roles.includes(role));
-    // Simple logic for brevity - using primary or reserve
-    const keyData = (primary && !this.keyHealth.get(primary.id).isBlocked) 
+    
+    // Fallback to reserve if primary is missing or blocked
+    const keyData = (primary && !this.keyHealth.get(primary.id)?.isBlocked) 
         ? primary 
         : GROQ_KEYS.find(k => k.isReserve);
     
+    if (!keyData?.key) throw new Error(`No available Groq Key for role: ${role}`);
+
     return { 
         client: new Groq({ apiKey: keyData.key }), 
         keyId: keyData.id 
@@ -61,27 +68,25 @@ class KeyManager {
       return new Amadeus({ clientId: k.clientId, clientSecret: k.clientSecret });
   }
 
-  reportSuccess(id) { /* ... keep existing ... */ }
-  reportFailure(id, err) { /* ... keep existing ... */ }
+  reportFailure(id, err) { console.error(`Key Error ${id}:`, err.message); }
 }
 
 export const keyManager = new KeyManager();
 
-// --- 3. PUBLIC ROUTER FUNCTION (WITH LOGGING) ---
+// --- 3. PUBLIC ROUTER FUNCTION ---
 export async function runAgent(role, systemPrompt, userContent) {
   const { client, keyId } = keyManager.getGroqClient(role);
   
-  // 🔥 MODEL SELECTION LOGIC
-  const model = role === AgentRole.ARCHITECT ? "llama-3.1-70b-versatile" : "llama-3.1-8b-instant";
-  const temp = role === AgentRole.TRANSFER ? 0.0 : 0.7;
+  // Select Model based on Role
+  let model = ModelConfig.FAST;
+  let temp = 0.7;
 
-  // 📝 TERMINAL LOG: SHOW AGENT ACTIVITY
-  console.log(`\n🤖 [AGENT START] Role: ${role}`);
-  console.log(`🔑 Key ID: ${keyId}`);
-  console.log(`🧠 Model: \x1b[36m${model}\x1b[0m`); // Cyan color for model name
+  if (role === AgentRole.ARCHITECT || role === AgentRole.MAPPING) {
+      model = ModelConfig.PLANNER;
+      temp = 0.4; // Lower temp for precise planning
+  }
 
   try {
-    const startTime = Date.now();
     const completion = await client.chat.completions.create({
       messages: [
         { role: "system", content: systemPrompt },
@@ -89,18 +94,11 @@ export async function runAgent(role, systemPrompt, userContent) {
       ],
       model: model,
       temperature: temp,
-      response_format: { type: role === AgentRole.ARCHITECT ? "text" : "json_object" }
+      response_format: { type: "json_object" } // Force JSON for all agents
     });
-
-    const duration = Date.now() - startTime;
-    console.log(`✅ [AGENT DONE] Took ${duration}ms`);
-    
-    keyManager.reportSuccess(keyId);
     return completion.choices[0]?.message?.content;
-
   } catch (error) {
-    console.error(`💥 [AGENT FAIL] Error on ${keyId}:`, error.message);
-    keyManager.reportFailure(keyId, error);
+    console.error(`Agent Error (${keyId}):`, error.message);
     throw error;
   }
 }
