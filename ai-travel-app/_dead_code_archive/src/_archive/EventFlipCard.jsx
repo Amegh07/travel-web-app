@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { MapPin, Ticket, Clock, ExternalLink } from 'lucide-react';
+import { MapPin, ExternalLink } from 'lucide-react';
 
 const EventFlipCard = ({ event }) => {
     const [isFlipped, setIsFlipped] = useState(false);

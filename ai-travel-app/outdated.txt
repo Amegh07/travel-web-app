@@ -1,0 +1,18 @@
+Package                      Current   Wanted   Latest  Location                                  Depended by
+@eslint/js                    9.39.2   9.39.4   10.0.1  node_modules/@eslint/js                   ai-travel-app
+@types/react                  19.2.8  19.2.14  19.2.14  node_modules/@types/react                 ai-travel-app
+@vitejs/plugin-react           5.1.2    5.1.4    5.1.4  node_modules/@vitejs/plugin-react         ai-travel-app
+autoprefixer                 10.4.23  10.4.27  10.4.27  node_modules/autoprefixer                 ai-travel-app
+axios                         1.13.2   1.13.6   1.13.6  node_modules/axios                        ai-travel-app
+eslint                        9.39.2   9.39.4   10.0.3  node_modules/eslint                       ai-travel-app
+eslint-plugin-react-refresh   0.4.26   0.4.26    0.5.2  node_modules/eslint-plugin-react-refresh  ai-travel-app
+framer-motion                12.28.1  12.35.2  12.35.2  node_modules/framer-motion                ai-travel-app
+globals                       16.5.0   16.5.0   17.4.0  node_modules/globals                      ai-travel-app
+jspdf                          4.1.0    4.2.0    4.2.0  node_modules/jspdf                        ai-travel-app
+lucide-react                 0.562.0  0.562.0  0.577.0  node_modules/lucide-react                 ai-travel-app
+postcss                        8.5.6    8.5.8    8.5.8  node_modules/postcss                      ai-travel-app
+react                         19.2.3   19.2.4   19.2.4  node_modules/react                        ai-travel-app
+react-dom                     19.2.3   19.2.4   19.2.4  node_modules/react-dom                    ai-travel-app
+react-router-dom              7.12.0   7.13.1   7.13.1  node_modules/react-router-dom             ai-travel-app
+tailwind-merge                 3.4.0    3.5.0    3.5.0  node_modules/tailwind-merge               ai-travel-app
+tailwindcss                   3.4.17   3.4.19    4.2.1  node_modules/tailwindcss                  ai-travel-app

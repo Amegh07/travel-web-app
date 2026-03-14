@@ -1,10 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { MapPin, Calendar, Sparkles, Plus, Minus, Wallet, Palmtree, Utensils, Music, Camera, Moon, Mic, Globe } from 'lucide-react';
 
 const HomePage = () => {
   const navigate = useNavigate();
-  
+
   // State for the form
   const [tripDetails, setTripDetails] = useState({
     from: '',
@@ -17,12 +17,10 @@ const HomePage = () => {
   });
 
   // Gamification: Travel Score
-  const [travelScore, setTravelScore] = useState(0);
-
-  useEffect(() => {
+  const [travelScore, setTravelScore] = useState(() => {
     const visited = JSON.parse(localStorage.getItem('visited_cities') || '[]');
-    setTravelScore(visited.length);
-  }, []);
+    return visited.length;
+  });
 
   // Voice Input Handler
   const handleVoiceInput = (field) => {
@@ -51,8 +49,8 @@ const HomePage = () => {
   const handleInterestToggle = (id) => {
     setTripDetails(prev => ({
       ...prev,
-      interests: prev.interests.includes(id) 
-        ? prev.interests.filter(i => i !== id) 
+      interests: prev.interests.includes(id)
+        ? prev.interests.filter(i => i !== id)
         : [...prev.interests, id]
     }));
   };
@@ -65,7 +63,7 @@ const HomePage = () => {
   return (
     <div className="min-h-screen bg-gray-50 flex justify-center py-10 px-4">
       <div className="w-full max-w-4xl bg-white rounded-3xl shadow-xl overflow-hidden border border-gray-100">
-        
+
         {/* Header Section */}
         <div className="bg-blue-600 p-8 text-white text-center">
           <div className="flex items-center justify-center gap-2 mb-2">
@@ -75,7 +73,7 @@ const HomePage = () => {
             <h1 className="text-3xl font-bold">Plan Your Trip</h1>
           </div>
           <p className="text-blue-100">Fill in the details and let AI do the rest</p>
-          
+
           {/* Gamification Badge */}
           <div className="mt-4 inline-flex items-center gap-2 bg-blue-700/50 px-4 py-1 rounded-full text-sm border border-blue-500/30">
             <Globe size={14} className="text-blue-200" />
@@ -85,21 +83,21 @@ const HomePage = () => {
 
         {/* Form Section */}
         <div className="p-8 space-y-8">
-          
+
           {/* 1. Cities & Country Row */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="space-y-2">
               <label className="text-sm font-semibold text-gray-600 ml-1">From City</label>
               <div className="relative">
                 <MapPin className="absolute left-3 top-3.5 text-gray-400" size={18} />
-                <input 
-                  type="text" 
+                <input
+                  type="text"
                   placeholder="e.g., New York"
                   className="w-full pl-10 p-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all"
                   value={tripDetails.from}
-                  onChange={(e) => setTripDetails({...tripDetails, from: e.target.value})}
+                  onChange={(e) => setTripDetails({ ...tripDetails, from: e.target.value })}
                 />
-                <button 
+                <button
                   onClick={() => handleVoiceInput('from')}
                   className="absolute right-3 top-3.5 text-gray-400 hover:text-blue-600 transition-colors"
                   title="Use Voice Input"
@@ -113,14 +111,14 @@ const HomePage = () => {
               <label className="text-sm font-semibold text-gray-600 ml-1">Destination City</label>
               <div className="relative">
                 <MapPin className="absolute left-3 top-3.5 text-blue-500" size={18} />
-                <input 
-                  type="text" 
+                <input
+                  type="text"
                   placeholder="e.g., Paris"
                   className="w-full pl-10 p-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all"
                   value={tripDetails.to}
-                  onChange={(e) => setTripDetails({...tripDetails, to: e.target.value})}
+                  onChange={(e) => setTripDetails({ ...tripDetails, to: e.target.value })}
                 />
-                <button 
+                <button
                   onClick={() => handleVoiceInput('to')}
                   className="absolute right-3 top-3.5 text-gray-400 hover:text-blue-600 transition-colors"
                   title="Use Voice Input"
@@ -133,14 +131,14 @@ const HomePage = () => {
             <div className="space-y-2">
               <label className="text-sm font-semibold text-gray-600 ml-1">Country</label>
               <div className="relative">
-                <input 
-                  type="text" 
+                <input
+                  type="text"
                   placeholder="e.g., France"
                   className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all"
                   value={tripDetails.country}
-                  onChange={(e) => setTripDetails({...tripDetails, country: e.target.value})}
+                  onChange={(e) => setTripDetails({ ...tripDetails, country: e.target.value })}
                 />
-                <button 
+                <button
                   onClick={() => handleVoiceInput('country')}
                   className="absolute right-3 top-3.5 text-gray-400 hover:text-blue-600 transition-colors"
                   title="Use Voice Input"
@@ -157,11 +155,11 @@ const HomePage = () => {
               <label className="text-sm font-semibold text-gray-600 ml-1">Travel Date</label>
               <div className="relative">
                 <Calendar className="absolute left-3 top-3.5 text-gray-400" size={18} />
-                <input 
-                  type="date" 
+                <input
+                  type="date"
                   className="w-full pl-10 p-3 bg-blue-50 border border-blue-100 text-blue-700 font-medium rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
                   value={tripDetails.date}
-                  onChange={(e) => setTripDetails({...tripDetails, date: e.target.value})}
+                  onChange={(e) => setTripDetails({ ...tripDetails, date: e.target.value })}
                 />
               </div>
             </div>
@@ -169,15 +167,15 @@ const HomePage = () => {
             <div className="space-y-2">
               <label className="text-sm font-semibold text-gray-600 ml-1">Number of Days</label>
               <div className="flex items-center gap-4">
-                <button 
-                  onClick={() => setTripDetails(prev => ({...prev, days: Math.max(1, prev.days - 1)}))}
+                <button
+                  onClick={() => setTripDetails(prev => ({ ...prev, days: Math.max(1, prev.days - 1) }))}
                   className="p-3 rounded-xl border border-gray-200 hover:bg-gray-50 text-gray-600 transition-colors"
                 >
                   <Minus size={20} />
                 </button>
                 <span className="text-2xl font-bold text-gray-800 w-8 text-center">{tripDetails.days}</span>
-                <button 
-                  onClick={() => setTripDetails(prev => ({...prev, days: Math.min(30, prev.days + 1)}))}
+                <button
+                  onClick={() => setTripDetails(prev => ({ ...prev, days: Math.min(30, prev.days + 1) }))}
                   className="p-3 rounded-xl border border-blue-200 bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors"
                 >
                   <Plus size={20} />
@@ -193,12 +191,11 @@ const HomePage = () => {
               {['Budget Friendly', 'Comfortable', 'Luxury'].map((level) => (
                 <button
                   key={level}
-                  onClick={() => setTripDetails({...tripDetails, budget: level})}
-                  className={`p-4 rounded-xl border text-left transition-all ${
-                    tripDetails.budget === level 
-                    ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-500' 
-                    : 'border-gray-200 hover:border-blue-300'
-                  }`}
+                  onClick={() => setTripDetails({ ...tripDetails, budget: level })}
+                  className={`p-4 rounded-xl border text-left transition-all ${tripDetails.budget === level
+                      ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-500'
+                      : 'border-gray-200 hover:border-blue-300'
+                    }`}
                 >
                   <div className="flex items-center gap-2 mb-1">
                     <Wallet size={18} className={tripDetails.budget === level ? 'text-blue-600' : 'text-gray-400'} />
@@ -222,11 +219,10 @@ const HomePage = () => {
                 <button
                   key={interest.id}
                   onClick={() => handleInterestToggle(interest.id)}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-full border text-sm font-medium transition-all ${
-                    tripDetails.interests.includes(interest.id)
-                    ? 'bg-gray-800 text-white border-gray-800'
-                    : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'
-                  }`}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-full border text-sm font-medium transition-all ${tripDetails.interests.includes(interest.id)
+                      ? 'bg-gray-800 text-white border-gray-800'
+                      : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'
+                    }`}
                 >
                   {interest.icon}
                   {interest.label}
@@ -236,7 +232,7 @@ const HomePage = () => {
           </div>
 
           {/* 5. Big Submit Button */}
-          <button 
+          <button
             onClick={handleSearch}
             className="w-full bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white text-lg font-bold py-4 rounded-xl shadow-lg shadow-blue-500/30 transform transition-all hover:scale-[1.01] active:scale-[0.99]"
           >

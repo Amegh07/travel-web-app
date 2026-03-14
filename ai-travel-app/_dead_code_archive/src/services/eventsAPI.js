@@ -11,7 +11,7 @@ export const fetchEvents = async (city, date) => {
   try {
     // Format date for Ticketmaster (YYYY-MM-DD)
     const startDate = date ? `${date}T00:00:00Z` : '';
-    
+
     const params = new URLSearchParams({
       apikey: API_KEY,
       city: city.split('(')[0].trim(),
@@ -21,13 +21,13 @@ export const fetchEvents = async (city, date) => {
     });
 
     const response = await fetch(
-      `https://app.ticketmaster.com/discovery/v2/events.json?  ${params.toString()}`
+      `https://app.ticketmaster.com/discovery/v2/events.json?${params.toString()}`
     );
 
     if (!response.ok) throw new Error(`Events API error: ${response.status}`);
 
     const data = await response.json();
-    
+
     if (!data._embedded?.events) return [];
 
     return data._embedded.events.map(event => ({

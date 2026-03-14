@@ -9,14 +9,8 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [react()],
     define: {
-      // 1. Create a fake 'process.env' so libraries like groq-sdk don't crash
-      'process.env': {},
-      
-      // 2. Put your API keys into a global window variable
-      'window.ENV': {
-        GROQ_API_KEY: JSON.stringify(env.GROQ_API_KEY),
-        GEMINI_API_KEY: JSON.stringify(env.GEMINI_API_KEY),
-      }
+      // 1. Create a fake 'process.env' so libraries don't crash in browser
+      'process.env': {}
     }
   }
 })

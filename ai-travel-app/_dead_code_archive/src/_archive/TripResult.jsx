@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { MapPin, Clock, ArrowLeft, Download, Share2, Calendar } from 'lucide-react';
+import { MapPin, ArrowLeft, Download, Share2, Calendar } from 'lucide-react';
 
 const TripResult = () => {
   const location = useLocation();

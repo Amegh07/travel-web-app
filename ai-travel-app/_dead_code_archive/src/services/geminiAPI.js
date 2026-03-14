@@ -1,4 +1,4 @@
-/* eslint-disable no-undef */
+ 
 import Groq from "groq-sdk";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 

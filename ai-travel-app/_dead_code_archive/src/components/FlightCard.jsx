@@ -1,4 +1,3 @@
-import React from 'react';
 import { Plane, ArrowRight } from 'lucide-react';
 
 const FlightCard = ({ flights }) => {

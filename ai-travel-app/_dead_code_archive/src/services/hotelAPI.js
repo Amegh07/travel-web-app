@@ -1,4 +1,4 @@
-export const fetchHotels = async (city, checkInDate, checkOutDate) => {
+export const fetchHotels = async (city, _checkInDate, _checkOutDate) => {
   // Simulate network delay (500ms)
   await new Promise(resolve => setTimeout(resolve, 500));
 
