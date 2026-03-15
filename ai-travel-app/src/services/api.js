@@ -52,18 +52,33 @@ export const searchCities = async (keyword) => {
 };
 
 // 2. ChatBot (The Concierge)
-export const chatWithAI = async (message, context) => {
+export const chatWithAI = async (message) => {
     try {
         const res = await fetch(`${API_BASE}/api/chat`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message, context })
+            body: JSON.stringify({ message })
         });
         if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
         return await res.json();
     } catch (error) {
         console.error("Chat API Error:", error);
-        return { reply: "I'm having trouble connecting to the travel network right now." };
+        return null; // Don't throw to caller, just return null so UI handles gracefully
+    }
+};
+
+export const modifyItinerary = async (prompt, currentItinerary) => {
+    try {
+        const res = await fetch(`${API_BASE}/api/modify-itinerary`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt, currentItinerary })
+        });
+        if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+        return await res.json();
+    } catch (error) {
+        console.error("Modify Itinerary Error:", error);
+        return null;
     }
 };
 
@@ -111,21 +126,70 @@ export const fetchEvents = async (destination, date) => {
     }
 };
 
+// --- 📦 BATCH AGGREGATION ---
+export const searchAll = async (searchData) => {
+    try {
+        const res = await fetch(`${API_BASE}/api/search-all`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ searchData })
+        });
+        if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+        return await res.json();
+    } catch (error) {
+        console.error("Search All API Error:", error);
+        return { transportData: { results: [] }, hotelData: [], eventData: [] };
+    }
+};
+
 // --- 🧠 AI ARCHITECT ENDPOINTS ---
 
-export const fetchItinerary = async (payload) => {
+export const fetchItineraryStream = async (payload, onChunk) => {
     try {
         const res = await fetch(`${API_BASE}/api/itinerary`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
         });
+
         if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
-        const data = await res.json();
-        return data.daily_plan ? data : getMockItinerary(payload.destination);
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            
+            // SSE lines are separated by \n\n
+            const lines = buffer.split('\n\n');
+            buffer = lines.pop(); // Keep the last incomplete line in the buffer
+
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    const dataStr = line.slice(6);
+                    if (dataStr === '[DONE]') {
+                        return; // Stream finished naturally
+                    }
+                    try {
+                        const parsed = JSON.parse(dataStr);
+                        if (parsed.error) throw new Error(parsed.error);
+                        if (parsed.chunk) {
+                            onChunk(parsed.chunk);
+                        }
+                    } catch (err) {
+                        console.warn('Failed to parse SSE chunk:', err, 'Data:', dataStr);
+                    }
+                }
+            }
+        }
     } catch (e) {
-        console.error(e);
-        return getMockItinerary(payload.destination);
+        console.error("Streaming Itinerary Error:", e);
+        // If the stream fails to even start, we immediately pass the mock string back
+        onChunk(JSON.stringify(getMockItinerary(payload.destination))); 
     }
 };
 

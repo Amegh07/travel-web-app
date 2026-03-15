@@ -1,7 +1,96 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Clock, Navigation, Info, Utensils, Share, Printer, Plus, Edit2, ShieldAlert, CheckCircle2, Ticket, Camera } from 'lucide-react';
-import { motion } from 'framer-motion';
+import { ArrowLeft, Clock, Navigation, Info, Utensils, Share, Printer, Plus, Edit2, Camera, LifeBuoy, X, Loader2, Sparkles } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { chatWithAI } from '../services/api';
+
+
+const RescueMeModal = ({ isOpen, onClose, destination, dayData }) => {
+    const [loading, setLoading] = useState(false);
+    const [options, setOptions] = useState([]);
+
+    useEffect(() => {
+        if (isOpen && options.length === 0) {
+            setLoading(true);
+            const fetchRescueOptions = async () => {
+                try {
+                    // Simulate context gathering
+                    const currentHour = new Date().getHours();
+                    const contextStr = `The user is currently in ${destination || 'their destination'} on Day ${dayData?.dayNumber}. It is currently hour ${currentHour} of the day. They have unexpected free time right now (about 2-3 hours) and are feeling tired or need a quick pivot. Generate exactly 3 highly specific "Micro-Itineraries" to kill time. Options should be relaxing, nearby, and low-friction (e.g., a specific cafe, an indoor museum if it's hot/raining, a quiet park). Return JSON array of 3 strings. Format: { "options": ["Option 1 text...", "Option 2 text...", "Option 3 text..."] }`;
+                    
+                    const res = await chatWithAI(contextStr);
+                    if (res && res.options) {
+                        setOptions(res.options);
+                    } else {
+                        throw new Error("Invalid response format");
+                    }
+                } catch (e) {
+                    console.error("Rescue Me Error:", e);
+                    setOptions([
+                        "Find a highly-rated local coffee shop within 2 blocks to rest your feet.",
+                        "Head back to the hotel for a 90-minute reset and shower.",
+                        "Open Google Maps and find the nearest indoor public gallery or museum."
+                    ]);
+                } finally {
+                    setLoading(false);
+                }
+            };
+            fetchRescueOptions();
+        }
+    }, [isOpen, destination, dayData, options.length]);
+
+    if (!isOpen) return null;
+
+    return (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-[#1C1916]/40 backdrop-blur-sm" onClick={onClose} />
+            <motion.div 
+                initial={{ opacity: 0, scale: 0.95, y: 20 }} 
+                animate={{ opacity: 1, scale: 1, y: 0 }} 
+                exit={{ opacity: 0, scale: 0.95, y: 20 }}
+                className="relative bg-[#FDFCFA] border border-[#E8E4DC] rounded-[2rem] p-8 max-w-lg w-full shadow-[0_32px_96px_rgba(28,25,22,0.2)] overflow-hidden"
+            >
+                {/* Decorative background glow */}
+                <div className="absolute top-0 right-0 w-64 h-64 bg-orange-500/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2" />
+                
+                <div className="flex justify-between items-start mb-6 relative z-10">
+                    <div>
+                        <div className="flex items-center gap-2 text-orange-600 font-bold text-xs uppercase tracking-widest mb-2">
+                            <LifeBuoy size={14} /> Contextual Rescue
+                        </div>
+                        <h2 className="serif-text text-3xl font-light tracking-tight text-[#1C1916]">Need to kill time?</h2>
+                        <p className="text-sm text-[#9C9690] mt-1">Based on your location and the current time, here are 3 low-friction ways to pivot.</p>
+                    </div>
+                    <button onClick={onClose} className="p-2 bg-[#F4F1EB] hover:bg-[#E8E4DC] rounded-full text-[#9C9690] transition-colors">
+                        <X size={16} />
+                    </button>
+                </div>
+
+                <div className="space-y-3 relative z-10 min-h-[160px]">
+                    {loading ? (
+                        <div className="absolute inset-0 flex flex-col items-center justify-center text-[#9C9690]">
+                            <Loader2 size={24} className="animate-spin mb-3 text-[#B89A6A]" />
+                            <p className="text-sm">Analyzing local area...</p>
+                        </div>
+                    ) : (
+                        options.map((opt, i) => (
+                            <button key={i} className="w-full text-left p-4 bg-white border border-[#E8E4DC] rounded-2xl hover:border-[#B89A6A] hover:shadow-md transition-all group">
+                                <div className="flex gap-4">
+                                    <div className="w-8 h-8 rounded-full bg-[#F4F1EB] group-hover:bg-[#B89A6A]/10 text-[#9C9690] group-hover:text-[#B89A6A] flex items-center justify-center font-bold text-xs transition-colors flex-shrink-0">
+                                        {i + 1}
+                                    </div>
+                                    <div className="text-sm text-[#5A554A] group-hover:text-[#1C1916] leading-relaxed transition-colors">
+                                        {opt}
+                                    </div>
+                                </div>
+                            </button>
+                        ))
+                    )}
+                </div>
+            </motion.div>
+        </div>
+    );
+};
 
 const DayDetailPage = () => {
     const { tripId: _tripId, dayNumber: _dayNumber } = useParams();
@@ -9,11 +98,15 @@ const DayDetailPage = () => {
     const [viewMode, setViewMode] = useState('full'); // 'summary' | 'full' | 'printable'
     const [dayData, setDayData] = useState(null);
     const [error, setError] = useState(null);
+    const [showRescueModal, setShowRescueModal] = useState(false);
+    const searchDataCache = localStorage.getItem('travex_search') || sessionStorage.getItem('travex_search');
+    const searchDataObj = searchDataCache ? JSON.parse(searchDataCache) : {};
+    const destName = searchDataObj.toCity?.name || searchDataObj.toCity || 'Destination';
 
     useEffect(() => {
         const loadMapData = async () => {
             try {
-                const cache = sessionStorage.getItem('travex_results_cache');
+                const cache = localStorage.getItem('travex_results_cache');
                 if (cache) {
                     const parsed = JSON.parse(cache);
                     const plan = parsed.aiItinerary;
@@ -47,7 +140,7 @@ const DayDetailPage = () => {
                                         type: isFood ? "meal" : "attraction",
                                         title: act.activity,
                                         time: { start, end, durationMins: 60, timeZone: "Local" },
-                                        location: { name: act.activity, address: act.location || "", geo: null },
+                                        location: { name: act.activity, address: act.location || "", geo: (act.latitude && act.longitude) ? { lat: act.latitude, lng: act.longitude } : null },
                                         logistics: {
                                             transitNotes: act.transit_instruction || null,
                                             accessibility: null,
@@ -57,7 +150,7 @@ const DayDetailPage = () => {
                                             status: "exploratory",
                                             provider: "Local Provider",
                                             estCost: { amount: parseFloat(act.cost_estimate || 0), currency: currencyMatch },
-                                            link: null,
+                                            link: act.booking_url || null,
                                             cancellationPolicy: null
                                         },
                                         mealDetails: isFood ? {
@@ -140,9 +233,26 @@ const DayDetailPage = () => {
                         <button className="bg-[#FDFCFA] p-2 rounded-full border border-[#E8E4DC] text-[#1C1916] hover:bg-[#E8E4DC] transition-colors" onClick={() => window.print()}>
                             <Printer className="w-4 h-4" />
                         </button>
+                        <button 
+                            onClick={() => setShowRescueModal(true)}
+                            className="bg-orange-50 border border-orange-200 text-orange-600 px-4 py-1.5 rounded-full text-[10px] uppercase font-bold tracking-widest hover:bg-orange-100 transition-colors flex items-center gap-1.5 whitespace-nowrap"
+                        >
+                            <LifeBuoy size={14} /> Rescue Me
+                        </button>
                     </div>
                 </div>
             </header>
+
+            <AnimatePresence>
+                {showRescueModal && (
+                    <RescueMeModal 
+                        isOpen={showRescueModal} 
+                        onClose={() => setShowRescueModal(false)} 
+                        destination={destName}
+                        dayData={data}
+                    />
+                )}
+            </AnimatePresence>
 
             <div className="max-w-7xl mx-auto px-6 py-8">
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">
@@ -194,13 +304,7 @@ const DayDetailPage = () => {
                                                     </div>
                                                 )}
 
-                                                {/* LOCAL PICK REASON */}
-                                                {item.reason_for_choice && (
-                                                    <div className="p-4 bg-[#FDFCFA] rounded-2xl text-xs space-y-2 border border-[#E8E4DC]">
-                                                        <span className="font-bold uppercase tracking-widest text-[#B89A6A] block mb-1 flex items-center gap-1.5"><Info size={12} /> Why Locals Love It</span>
-                                                        <p className="text-[#5A554A] italic">{item.reason_for_choice}</p>
-                                                    </div>
-                                                )}
+
 
                                                 {/* LOCATION & TRANSIT */}
                                                 <div className="flex gap-4 p-4 bg-[#F4F1EB] rounded-2xl">
@@ -244,44 +348,53 @@ const DayDetailPage = () => {
                                         {viewMode !== 'printable' && (
                                             <div className="mt-6 pt-5 border-t border-[#E8E4DC] flex flex-wrap items-center justify-between gap-4">
                                                 <div className="flex items-center gap-3">
-                                                    {item.booking.status === 'exploratory' ? (
-                                                        <span className="flex items-center gap-1.5 text-xs font-bold text-[#B89A6A] bg-[#B89A6A]/10 px-3 py-1.5 rounded-full uppercase tracking-widest">
-                                                            <ShieldAlert size={14} /> Exploratory
-                                                        </span>
-                                                    ) : (
-                                                        <span className="flex items-center gap-1.5 text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-full uppercase tracking-widest">
-                                                            <CheckCircle2 size={14} /> Reserved
-                                                        </span>
-                                                    )}
                                                     <span className="text-xs font-bold font-mono px-2 py-1 bg-[#F4F1EB] rounded border border-[#E8E4DC] text-[#5A554A]">
                                                         {item.booking.estCost ? `${item.booking.estCost.currency}${item.booking.estCost.amount}` : item.mealDetails?.priceBand}
                                                     </span>
                                                 </div>
 
-                                                <div className="flex items-center gap-2">
+                                                 <div className="flex items-center gap-2 flex-wrap">
+                                                    {/* Google Maps directions button — always show */}
+                                                    <button
+                                                        onClick={() => {
+                                                            const geo = item.location?.geo;
+                                                            const query = geo
+                                                                ? `${geo.lat},${geo.lng}`
+                                                                : encodeURIComponent(item.title);
+                                                            window.open(`https://www.google.com/maps/dir/?api=1&destination=${query}`, '_blank');
+                                                        }}
+                                                        className="text-[10px] uppercase tracking-widest font-medium text-[#2E3C3A] bg-[#F4F1EB] hover:bg-[#E8E4DC] border border-[#E8E4DC] transition-colors px-3 py-2 rounded-xl flex items-center gap-1.5"
+                                                    >
+                                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="3 11 22 2 13 21 11 13 3 11" /></svg>
+                                                        Directions
+                                                    </button>
+
                                                     {item.alternatives && (
                                                         <button className="text-[10px] uppercase tracking-widest font-bold text-[#9C9690] hover:text-[#1C1916] transition-colors px-3 py-2 border border-[#E8E4DC] rounded-xl hover:bg-[#F4F1EB]">
                                                             Explore Alternatives
                                                         </button>
                                                     )}
 
-                                                    {/* DYNAMIC CTA */}
-                                                    {item.booking.status === 'exploratory' ? (
-                                                        <button
-                                                            onClick={() => window.open(item.booking.link || `https://www.google.com/search?q=book+${encodeURIComponent(item.title)}`, '_blank')}
-                                                            className="text-[10px] uppercase tracking-widest font-bold text-[#FDFCFA] bg-[#1C1916] hover:bg-[#2E3C3A] transition-colors px-4 py-2 rounded-xl flex items-center gap-2"
-                                                        >
-                                                            <Ticket size={14} /> Secure your spot
-                                                        </button>
-                                                    ) : (
-                                                        <button
-                                                            onClick={() => alert(`Showing confirmation for ${item.title}: ${item.booking.confirmationNumber}`)}
-                                                            className="text-[10px] uppercase tracking-widest font-bold text-[#1C1916] bg-[#FDFCFA] transition-colors px-4 py-2 border border-[#1C1916] rounded-xl flex items-center gap-2 hover:bg-[#F4F1EB]"
-                                                        >
-                                                            <Ticket size={14} /> View Confirmation
-                                                        </button>
+                                                    {/* DYNAMIC CTA — only show when a real booking link exists */}
+                                                    {item.booking.link && (
+                                                        item.booking.status === 'confirmed' ? (
+                                                            <button
+                                                                onClick={() => alert(`Showing confirmation for ${item.title}: ${item.booking.confirmationNumber}`)}
+                                                                className="text-[10px] uppercase tracking-widest font-bold text-[#1C1916] bg-[#FDFCFA] transition-colors px-4 py-2 border border-[#1C1916] rounded-xl flex items-center gap-2 hover:bg-[#F4F1EB]"
+                                                            >
+                                                                <Ticket size={14} /> View Confirmation
+                                                            </button>
+                                                        ) : (
+                                                            <button
+                                                                onClick={() => window.open(item.booking.link, '_blank')}
+                                                                className="text-[10px] uppercase tracking-widest font-bold text-[#FDFCFA] bg-[#1C1916] hover:bg-[#2E3C3A] transition-colors px-4 py-2 rounded-xl flex items-center gap-2"
+                                                            >
+                                                                <Ticket size={14} /> Secure your spot
+                                                            </button>
+                                                        )
                                                     )}
                                                 </div>
+
                                             </div>
                                         )}
 
@@ -295,18 +408,67 @@ const DayDetailPage = () => {
                     {viewMode !== 'printable' && (
                         <div className="lg:col-span-5 relative hidden lg:block">
                             <div className="sticky top-32 space-y-6">
-                                {/* INTERACTIVE MAP */}
-                                <div className="w-full h-80 rounded-3xl border border-[#E8E4DC] overflow-hidden shadow-[0_8px_32px_rgba(28,25,22,0.08)] mb-6 relative z-0 bg-[#E8E4DC]">
-                                    <iframe
-                                        width="100%"
-                                        height="100%"
-                                        style={{ border: 0 }}
-                                        loading="lazy"
-                                        allowFullScreen
-                                        referrerPolicy="no-referrer-when-downgrade"
-                                        src={`https://maps.google.com/maps?q=${encodeURIComponent((data.items[0]?.location?.name || "") + " " + (data.items[0]?.location?.address || "") + " " + data.meta.header)}&hl=en&z=14&output=embed`}
-                                    ></iframe>
-                                </div>
+                                {/* INTERACTIVE MAP — full day route */}
+                                {(() => {
+                                    // Build stop list: hotel as origin, all activities as stops
+                                    const cache = (() => { try { return JSON.parse(localStorage.getItem('travex_results_cache') || '{}'); } catch { return {}; } })();
+                                    const hotelName = cache.confirmedHotel?.name || '';
+                                    const stops = data.items
+                                        .filter(it => !it.title.toLowerCase().includes('transit') && !it.title.toLowerCase().includes('check-in'))
+                                        .map(it => {
+                                            const g = it.location?.geo;
+                                            return g ? `${g.lat},${g.lng}` : encodeURIComponent(it.title);
+                                        });
+
+                                    // Google Maps dir URL: /maps/dir/origin/stop1/stop2/...
+                                    const origin = hotelName ? encodeURIComponent(hotelName) : stops[0] || '';
+                                    const destinations = stops.slice(hotelName ? 0 : 1).join('/');
+                                    const routeUrl = `https://www.google.com/maps/dir/${origin}/${destinations}`;
+
+                                    // Embed URL — shows the route preview without API key
+                                    const embedOrigin = hotelName ? encodeURIComponent(hotelName) : (data.items[0]?.location?.name || '');
+                                    const embedDest = encodeURIComponent(data.items[data.items.length - 1]?.title || '');
+                                    const waypointNames = data.items.slice(1, -1).map(it => encodeURIComponent(it.title)).join('|');
+                                    const embedSrc = `https://maps.google.com/maps?saddr=${embedOrigin}&daddr=${embedDest}&waypoints=${waypointNames}&hl=en&output=embed`;
+
+                                    return (
+                                        <div className="mb-6">
+                                            <div className="w-full h-72 rounded-3xl border border-[#E8E4DC] overflow-hidden shadow-[0_8px_32px_rgba(28,25,22,0.08)] relative z-0 bg-[#E8E4DC]">
+                                                <iframe
+                                                    width="100%"
+                                                    height="100%"
+                                                    style={{ border: 0 }}
+                                                    loading="lazy"
+                                                    allowFullScreen
+                                                    referrerPolicy="no-referrer-when-downgrade"
+                                                    src={embedSrc}
+                                                />
+                                            </div>
+                                            {/* Route stop summary */}
+                                            <div className="mt-3 space-y-1.5">
+                                                {data.items.filter(it => !it.title.toLowerCase().includes('transit')).map((it, si) => (
+                                                    <div key={si} className="flex items-center gap-2 text-xs">
+                                                        <div className="w-5 h-5 rounded-full bg-[#1C1916] text-[#B89A6A] flex items-center justify-center text-[9px] font-bold flex-shrink-0">
+                                                            {si + 1}
+                                                        </div>
+                                                        <span className="text-[#1C1916] font-medium truncate">{it.title}</span>
+                                                        {si < data.items.filter(i => !i.title.toLowerCase().includes('transit')).length - 1 && (
+                                                            <span className="text-[#9C9690] text-[9px] ml-auto flex-shrink-0">→ next</span>
+                                                        )}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                            <button
+                                                onClick={() => window.open(routeUrl, '_blank')}
+                                                className="mt-3 w-full py-2.5 bg-[#1C1916] hover:bg-[#2E3C3A] text-[#FDFCFA] rounded-2xl text-[10px] font-bold uppercase tracking-widest flex items-center justify-center gap-2 transition-colors"
+                                            >
+                                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="3 11 22 2 13 21 11 13 3 11" /></svg>
+                                                Open Full Route in Maps
+                                            </button>
+                                        </div>
+                                    );
+                                })()}
+
 
                                 {/* DAY SUMMARY WIDGET */}
                                 <div className="bg-[#FDFCFA] rounded-3xl border border-[#E8E4DC] p-6 shadow-sm">

@@ -24,11 +24,13 @@ const MainApp = () => {
 
   const handleSearch = (data) => {
     sessionStorage.removeItem('travex_results_cache');
+    localStorage.removeItem('travex_results_cache'); // FORCE CLEAR OLD CACHE
     setSearchData(data);
   };
 
   const handleBack = () => {
     sessionStorage.removeItem('travex_results_cache');
+    localStorage.removeItem('travex_results_cache'); // FORCE CLEAR OLD CACHE
     setSearchData(null);
   };
 

@@ -5,14 +5,28 @@ import {
     Lock, Navigation, Sparkles, Star, ChevronDown, Globe,
     Music, Utensils, Moon, Camera, Heart
 } from 'lucide-react';
-import { fetchFlights, fetchHotels, fetchEvents, fetchItinerary } from '../services/api';
+import { searchAll, fetchItineraryStream } from '../services/api';
 import ItineraryTimeline from '../components/ItineraryTimeline';
 import ChatBot from '../components/ChatBot';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 
 // --- HELPERS ---
 const formatDuration = (ptString) => ptString ? ptString.replace("PT", "").toLowerCase() : "";
 const getAirlineLogo = (code) => code ? `https://pics.avs.io/200/200/${code}.png` : '';
+const getAirlineLogoFallback = () => `https://images.unsplash.com/photo-1436491865332-7a61a109cc05?w=100&q=60`;
+// Generate a contextual image for hotels - uses server-assigned image first, then picsum stable seed
+const getHotelImage = (hotel) => {
+    if (hotel.image) return hotel.image;
+    // picsum with seed based on hotel name gives stable, beautiful photos
+    const seed = (hotel.id || hotel.name || 'hotel').split('').reduce((a, c) => a + c.charCodeAt(0), 0) % 800;
+    return `https://picsum.photos/seed/${seed}/800/500`;
+};
+// Generate contextual image for events - uses Ticketmaster image first, then picsum
+const getEventImage = (event) => {
+    if (event.image) return event.image;
+    const seed = (event.id || event.title || 'event').split('').reduce((a, c) => a + c.charCodeAt(0), 0) % 800;
+    return `https://picsum.photos/seed/${seed}/800/500`;
+};
 const calculateNights = (start, end) => {
     const s = new Date(start);
     const e = new Date(end);
@@ -22,6 +36,52 @@ const openDirectionsToAirport = (originName) => {
     if (!originName) return;
     const query = encodeURIComponent(`${originName} Airport`);
     window.open(`https://www.google.com/maps/search/?api=1&query=${query}`, '_blank');
+};
+
+// --- COMPONENT: CHECKOUT BAR ---
+const CheckoutBar = ({ flight, hotel, currencySymbol, nights, destName, originName, departDate }) => {
+    if (!flight || !hotel) return null;
+    
+    const flightPrice = parseFloat(flight.price?.total || 0);
+    const hotelPrice = parseFloat(hotel.price.replace(/[^0-9.]/g, '')) * nights;
+    const total = flightPrice + hotelPrice;
+
+    return (
+        <div className="w-full bg-[#1C1916] text-[#FDFCFA] rounded-3xl overflow-hidden shadow-[0_16px_48px_rgba(28,25,22,0.2)] border border-[#B89A6A]/20">
+            <div className="p-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
+                {/* Summary */}
+                <div className="flex flex-col md:flex-row items-start md:items-center gap-6 flex-1">
+                    <div>
+                        <div className="text-[10px] text-[#9C9690] tracking-widest uppercase mb-1">Total Journey + Stay</div>
+                        <div className="serif-text text-4xl font-light tracking-tight">{currencySymbol} {total.toFixed(2)}</div>
+                        <div className="text-[#9C9690] text-[10px] mt-1 tracking-wide">{nights} night{nights > 1 ? 's' : ''} · {flight.validatingAirlineCodes?.[0] || 'Flight'} + {hotel.name}</div>
+                    </div>
+                    <div className="hidden md:block h-14 w-px bg-[#B89A6A]/20" />
+                    <div className="grid grid-cols-2 gap-x-8 gap-y-1 text-xs">
+                        <div className="text-[#9C9690] uppercase tracking-widest text-[10px]">Flight</div>
+                        <div className="text-[#FDFCFA] font-medium">{currencySymbol} {flightPrice.toFixed(2)}</div>
+                        <div className="text-[#9C9690] uppercase tracking-widest text-[10px]">Hotel</div>
+                        <div className="text-[#FDFCFA] font-medium">{currencySymbol} {hotelPrice.toFixed(2)}</div>
+                    </div>
+                </div>
+                {/* CTA Buttons */}
+                <div className="flex flex-col sm:flex-row items-stretch gap-3 w-full md:w-auto">
+                    <button 
+                        onClick={() => window.open(`https://www.google.com/flights?hl=en#flt=${originName}.${destName}.${departDate}`, '_blank')}
+                        className="flex-1 md:flex-none border border-[#B89A6A] hover:bg-[#B89A6A]/10 text-[#B89A6A] px-7 py-3.5 rounded-2xl text-xs font-bold uppercase tracking-widest transition-all flex items-center justify-center gap-2 group"
+                    >
+                        <Plane size={14} className="group-hover:translate-x-0.5 transition-transform" /> Book Flight
+                    </button>
+                    <button 
+                        onClick={() => window.open(`https://www.google.com/search?q=book+${encodeURIComponent(hotel.name)}`, '_blank')}
+                        className="flex-1 md:flex-none bg-[#B89A6A] hover:bg-[#A8876A] text-[#1C1916] px-7 py-3.5 rounded-2xl text-xs font-bold uppercase tracking-widest transition-all flex items-center justify-center gap-2 group shadow-[0_4px_16px_rgba(184,154,106,0.3)]"
+                    >
+                        <Hotel size={14} className="group-hover:scale-110 transition-transform" /> Book Hotel
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
 };
 
 // --- COMPONENT: FLIGHT CARD ---
@@ -45,8 +105,20 @@ const FlightCard = ({ flight, isSelected, onSelect, showBook = false }) => {
 
             <div className="flex justify-between items-start mb-6">
                 <div className="flex items-center gap-4">
-                    <div className="w-12 h-12 bg-[#F4F1EB] rounded-xl p-2 flex items-center justify-center border border-[#E8E4DC] font-bold text-[#B89A6A]">
-                        {airlineCode ? <img src={getAirlineLogo(airlineCode)} alt={airlineCode} className="max-w-full max-h-full" /> : 'AF'}
+                    <div className="w-12 h-12 bg-[#F4F1EB] rounded-xl overflow-hidden flex items-center justify-center border border-[#E8E4DC] font-bold text-[#B89A6A] text-sm">
+                        {airlineCode
+                            ? <img
+                                src={getAirlineLogo(airlineCode)}
+                                alt={airlineCode}
+                                className="w-full h-full object-contain p-1"
+                                onError={(e) => {
+                                    e.target.onerror = null;
+                                    e.target.src = getAirlineLogoFallback(airlineCode);
+                                    e.target.className = 'w-full h-full object-cover';
+                                }}
+                              />
+                            : <Plane size={20} />
+                        }
                     </div>
                     <div>
                         <div className="serif-text font-medium text-[#1C1916] text-xl tracking-tight">{airlineCode} Airlines</div>
@@ -120,10 +192,10 @@ const HotelCard = ({ hotel, isSelected, onSelect, nights, showBook = false }) =>
         >
             <div className="relative h-56 overflow-hidden bg-[#2E3C3A]">
                 <img
-                    src={hotel.image}
+                    src={getHotelImage(hotel)}
                     className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
                     alt={hotel.name}
-                    onError={(e) => e.target.src = "https://images.unsplash.com/photo-1542314831-c6a4d14248cb?w=800&q=80"}
+                    onError={(e) => { e.target.onerror = null; e.target.src = 'https://images.unsplash.com/photo-1542314831-c6a4d14248cb?w=800&q=80'; }}
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-[#1C1916]/60 via-transparent to-transparent"></div>
                 {isSelected && (
@@ -195,9 +267,10 @@ const EventCard = ({ event, isAdded, onToggle }) => {
         <div className={`relative flex gap-4 p-4 rounded-2xl border transition-all bg-[#FDFCFA] ${isAdded ? 'border-[#B89A6A]/50 shadow-[0_4px_16px_rgba(184,154,106,0.1)]' : 'border-[#E8E4DC] hover:shadow-[0_4px_16px_rgba(28,25,22,0.06)]'}`}>
             <div className="w-28 h-28 rounded-xl overflow-hidden bg-[#F4F1EB] flex-shrink-0 relative">
                 <img
-                    src={event.image || "https://images.unsplash.com/photo-1543349689-cead14c99551?w=400&q=80"}
+                    src={getEventImage(event)}
                     className="w-full h-full object-cover relative z-10"
                     alt={event.title}
+                    onError={(e) => { e.target.onerror = null; e.target.src = 'https://images.unsplash.com/photo-1501281668745-f7f57925c3b4?w=400&q=80'; }}
                 />
             </div>
             <div className="flex-1 flex flex-col">
@@ -255,19 +328,83 @@ const FlightModal = ({ isOpen, onClose, flights, selectedId, onSelect }) => {
 };
 
 const HotelModal = ({ isOpen, onClose, hotels, selectedId, onSelect, nights }) => {
+    const [sort, setSort] = useState('price_asc');
+    const [minStars, setMinStars] = useState(0);
+
+    const filtered = useMemo(() => {
+        let list = [...hotels];
+        if (minStars > 0) {
+            list = list.filter(h => parseFloat(h.rating || 0) >= minStars);
+        }
+        if (sort === 'price_asc') list.sort((a, b) => parseFloat(a.price.replace(/[^0-9.]/g, '')) - parseFloat(b.price.replace(/[^0-9.]/g, '')));
+        else if (sort === 'price_desc') list.sort((a, b) => parseFloat(b.price.replace(/[^0-9.]/g, '')) - parseFloat(a.price.replace(/[^0-9.]/g, '')));
+        else if (sort === 'distance') list.sort((a, b) => parseFloat(a.distance || '99') - parseFloat(b.distance || '99'));
+        return list;
+    }, [hotels, sort, minStars]);
+
     if (!isOpen) return null;
     return (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-[#1C1916]/80 backdrop-blur-sm animate-fade-in">
             <div className="w-full max-w-5xl bg-[#FDFCFA] border border-[#E8E4DC] rounded-[2rem] shadow-[0_16px_48px_rgba(28,25,22,0.1)] overflow-hidden flex flex-col max-h-[90vh]">
+                {/* Header */}
                 <div className="p-6 border-b border-[#E8E4DC] flex justify-between items-center bg-[#F4F1EB]">
-                    <div><h2 className="serif-text text-3xl font-light text-[#1C1916] tracking-tight">Select Stay</h2><p className="text-[#9C9690] text-[10px] tracking-widest uppercase mt-1">{hotels.length} options available</p></div>
+                    <div>
+                        <h2 className="serif-text text-3xl font-light text-[#1C1916] tracking-tight">Select Stay</h2>
+                        <p className="text-[#9C9690] text-[10px] tracking-widest uppercase mt-1">{filtered.length} of {hotels.length} options</p>
+                    </div>
                     <button onClick={onClose} className="p-2 hover:bg-[#E8E4DC] rounded-full text-[#1C1916] transition-colors"><X size={20} /></button>
                 </div>
-                <div className="overflow-y-auto p-6 grid grid-cols-1 md:grid-cols-3 gap-6">{hotels.map((h, i) => <HotelCard key={i} hotel={h} nights={nights} isSelected={selectedId === h.id} onSelect={(ht) => { onSelect(ht); onClose(); }} showBook={true} />)}</div>
+
+                {/* Filter Bar */}
+                <div className="p-4 border-b border-[#E8E4DC] bg-[#FDFCFA] flex flex-wrap gap-3 items-center">
+                    {/* Sort */}
+                    <div className="flex items-center gap-1.5">
+                        <span className="text-[9px] text-[#9C9690] uppercase tracking-widest font-medium">Sort:</span>
+                        {[
+                            { id: 'price_asc', label: 'Price ↑' },
+                            { id: 'price_desc', label: 'Price ↓' },
+                            { id: 'distance', label: 'Nearest' },
+                        ].map(s => (
+                            <button key={s.id} onClick={() => setSort(s.id)}
+                                className={`px-3 py-1.5 rounded-xl text-[10px] tracking-widest uppercase font-medium border transition-all
+                                ${sort === s.id ? 'bg-[#1C1916] text-[#FDFCFA] border-[#1C1916]' : 'text-[#9C9690] border-[#E8E4DC] bg-[#F4F1EB] hover:border-[#1C1916]/30'}`}>
+                                {s.label}
+                            </button>
+                        ))}
+                    </div>
+
+                    <div className="w-px h-5 bg-[#E8E4DC]" />
+
+                    {/* Star Rating Filter */}
+                    <div className="flex items-center gap-1.5">
+                        <span className="text-[9px] text-[#9C9690] uppercase tracking-widest font-medium">Stars:</span>
+                        {[
+                            { val: 0, label: 'Any' },
+                            { val: 3, label: '3★+' },
+                            { val: 4, label: '4★+' },
+                            { val: 5, label: '5★' },
+                        ].map(s => (
+                            <button key={s.val} onClick={() => setMinStars(s.val)}
+                                className={`px-3 py-1.5 rounded-xl text-[10px] tracking-widest uppercase font-medium border transition-all
+                                ${minStars === s.val ? 'bg-[#B89A6A] text-[#FDFCFA] border-[#B89A6A]' : 'text-[#9C9690] border-[#E8E4DC] bg-[#F4F1EB] hover:border-[#B89A6A]/40'}`}>
+                                {s.label}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+
+                {/* Hotel Grid */}
+                <div className="overflow-y-auto p-6 grid grid-cols-1 md:grid-cols-3 gap-6">
+                    {filtered.length > 0
+                        ? filtered.map((h, i) => <HotelCard key={i} hotel={h} nights={nights} isSelected={selectedId === h.id} onSelect={(ht) => { onSelect(ht); onClose(); }} showBook={true} />)
+                        : <div className="col-span-3 text-center text-[#9C9690] py-16 serif-text text-xl">No hotels match your filters.</div>
+                    }
+                </div>
             </div>
         </div>
     );
 };
+
 
 const EventModal = ({ isOpen, onClose, events, addedEvents, onToggle }) => {
     const [filter, setFilter] = useState('all');
@@ -295,67 +432,67 @@ const EventModal = ({ isOpen, onClose, events, addedEvents, onToggle }) => {
     );
 };
 
-// --- MINI-MAP BRIDGE ---
-const MiniMapBridge = ({ data, loading }) => (
-    <div className="relative w-full h-64 bg-[#1C1916] rounded-2xl border border-[#2E3C3A] overflow-hidden shadow-[0_8px_32px_rgba(28,25,22,0.2)] flex flex-col group">
-        <div className="absolute inset-0 opacity-40 transition-opacity group-hover:opacity-60">
-            <div className="absolute inset-0 bg-[radial-gradient(#B89A6A_1px,transparent_1px)] [background-size:24px_24px] [mask-image:radial-gradient(ellipse_80%_80%_at_50%_50%,#000_70%,transparent_100%)]"></div>
-            {data && !loading && (
-                <svg className="absolute inset-0 w-full h-full">
-                    <motion.path initial={{ pathLength: 0 }} animate={{ pathLength: 1 }} transition={{ duration: 2, ease: "easeInOut" }} d="M 80 80 Q 400 150 700 80" stroke="url(#gradient-line)" strokeWidth="3" fill="none" strokeLinecap="round" />
-                    <defs><linearGradient id="gradient-line"><stop stopColor="#B89A6A" /><stop offset="1" stopColor="#2E3C3A" /></linearGradient></defs>
-                    <circle cx="80" cy="80" r="5" fill="#B89A6A" className="animate-ping" />
-                    <circle cx="700" cy="80" r="5" fill="#2E3C3A" className="animate-ping" />
-                </svg>
-            )}
+// --- MINI-MAP BRIDGE (compact strip) ---
+const MiniMapBridge = ({ data, loading }) => {
+    if (loading) return (
+        <div className="flex items-center gap-3 bg-[#FDFCFA] border border-[#E8E4DC] rounded-2xl px-5 py-3.5 animate-pulse">
+            <div className="w-8 h-8 rounded-xl bg-[#F4F1EB] border border-[#E8E4DC]" />
+            <div className="h-3 bg-[#F4F1EB] rounded w-40" />
         </div>
-        <div className="relative z-10 flex-1 p-6 flex flex-col justify-between">
-            <div className="flex justify-between items-start">
-                <div className="inline-flex items-center gap-2 bg-[#FDFCFA]/10 backdrop-blur-md border border-[#FDFCFA]/10 px-3 py-1.5 rounded-full">
-                    <Sparkles className="w-3 h-3 text-[#B89A6A]" />
-                    <span className="text-[10px] font-medium text-[#FDFCFA] uppercase tracking-widest">AI Logistics</span>
-                </div>
+    );
+    if (!data) return null;
+    return (
+        <div className="flex items-center gap-4 bg-[#FDFCFA] border border-[#E8E4DC] rounded-2xl px-5 py-3.5 shadow-[0_1px_4px_rgba(28,25,22,0.05)]">
+            <div className="w-8 h-8 rounded-xl bg-[#F4F1EB] border border-[#E8E4DC] flex items-center justify-center flex-shrink-0">
+                <Car className="w-4 h-4 text-[#B89A6A]" />
             </div>
-            {loading ? (
-                <div className="space-y-4">
-                    <div className="h-4 bg-[#FDFCFA]/10 rounded-full w-3/4 animate-pulse"></div>
-                    <div className="h-4 bg-[#FDFCFA]/10 rounded-full w-1/2 animate-pulse"></div>
-                </div>
-            ) : data ? (
-                <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
-                    <div className="flex justify-between items-end">
-                        <div>
-                            <div className="text-[10px] text-[#FDFCFA]/40 uppercase tracking-widest font-medium mb-1">Transfer</div>
-                            <div className="serif-text text-3xl font-light text-[#FDFCFA] tracking-tight">{data.duration}</div>
-                            <div className="flex items-center gap-2 text-[#B89A6A] text-xs font-medium mt-1 tracking-wide">
-                                <Car className="w-3 h-3" /> {data.distance} · {data.traffic}
-                            </div>
-                        </div>
-                        <button onClick={() => window.open(data.routeUrl, '_blank')} className="bg-[#FDFCFA] text-[#1C1916] p-2.5 rounded-xl hover:scale-105 transition-transform shadow-lg">
-                            <Navigation className="w-4 h-4" />
-                        </button>
-                    </div>
-                </motion.div>
-            ) : (
-                <div className="text-[#9C9690] text-sm tracking-wide">Select a Flight and Hotel to unlock route details.</div>
-            )}
+            <div className="flex-1">
+                <span className="text-[#1C1916] text-sm font-medium">Transfer to hotel</span>
+                <span className="text-[#9C9690] text-xs ml-2">{data.duration} · {data.distance} · {data.traffic}</span>
+            </div>
+            <button
+                onClick={() => window.open(data.routeUrl, '_blank')}
+                className="text-[10px] text-[#B89A6A] font-medium hover:underline flex items-center gap-1 tracking-widest uppercase flex-shrink-0"
+            >
+                Directions <ExternalLink className="w-3 h-3" />
+            </button>
         </div>
-    </div>
-);
+    );
+};
 
 // --- MAIN PAGE ---
 const ResultsPage = ({ searchData, onBack }) => {
+    // DYNAMIC DATA
+    const getName = (data) => data?.name || data || "Destination";
+    const rawDestName = searchData ? getName(searchData.toCity) : "Destination";
+    const destName = rawDestName.replace(/\b(INTL|INTERNATIONAL|AIRPORT|AIR PORT)\b/gi, "").trim();
+    const originName = searchData ? getName(searchData.fromCity) : "Origin";
+    const arrivalDate = searchData?.departDate;
+    const departureDate = searchData?.returnDate || new Date(new Date(arrivalDate).setDate(new Date(arrivalDate).getDate() + 3)).toISOString().split('T')[0];
+    const nights = calculateNights(arrivalDate, departureDate);
+    const journeyCurrency = searchData?.currency || 'INR';
+    const journeySymbol = journeyCurrency === 'USD' ? '$' : journeyCurrency === 'EUR' ? '€' : journeyCurrency === 'GBP' ? '£' : '₹';
+
     // CACHE INITIATION
     const getCache = () => {
-        try { return JSON.parse(sessionStorage.getItem('travex_results_cache')) || {}; }
+        try { 
+            const cache = JSON.parse(localStorage.getItem('travex_results_cache')) || {};
+            // If the cached destination doesn't match the current search destination, ignore the cache
+            if (cache.lastSearchDestination && cache.lastSearchDestination !== destName) {
+                return {};
+            }
+            return cache;
+        }
         catch { return {}; }
     };
 
-    const [transport, setTransport] = useState(() => getCache().transport || { type: 'loading', data: [], journey: null });
-    const [hotels, setHotels] = useState(() => getCache().hotels || []);
-    const [events, setEvents] = useState(() => getCache().events || []);
-    const [loading, setLoading] = useState(() => getCache().hotels ? false : true);
-    const [heroImage, setHeroImage] = useState(() => getCache().heroImage || null);
+    const initialCache = getCache();
+
+    const [transport, setTransport] = useState(() => initialCache.transport || { type: 'loading', data: [], journey: null });
+    const [hotels, setHotels] = useState(() => initialCache.hotels || []);
+    const [events, setEvents] = useState(() => initialCache.events || []);
+    const [loading, setLoading] = useState(() => initialCache.hotels?.length > 0 ? false : true);
+    const [heroImage, setHeroImage] = useState(() => initialCache.heroImage || null);
 
     // MODAL STATES
     const [isFlightModalOpen, setIsFlightModalOpen] = useState(false);
@@ -363,46 +500,110 @@ const ResultsPage = ({ searchData, onBack }) => {
     const [isEventModalOpen, setIsEventModalOpen] = useState(false);
 
     // 🔒 AI STATE
-    const [confirmedFlight, setConfirmedFlight] = useState(() => getCache().confirmedFlight || null);
-    const [confirmedHotel, setConfirmedHotel] = useState(() => getCache().confirmedHotel || null);
-    const [addedEvents, setAddedEvents] = useState(() => getCache().addedEvents || []);
-    const [miniMapData, setMiniMapData] = useState(() => getCache().miniMapData || null);
+    const [confirmedFlight, setConfirmedFlight] = useState(() => initialCache.confirmedFlight || null);
+    const [confirmedHotel, setConfirmedHotel] = useState(() => initialCache.confirmedHotel || null);
+    const [addedEvents, setAddedEvents] = useState(() => initialCache.addedEvents || []);
+    const [miniMapData, setMiniMapData] = useState(() => initialCache.miniMapData || null);
     const [bridgeLoading, setBridgeLoading] = useState(false);
-    const [aiItinerary, setAiItinerary] = useState(() => getCache().aiItinerary || null);
+    const [aiItinerary, setAiItinerary] = useState(() => initialCache.aiItinerary || null);
     const [plannerLoading, setPlannerLoading] = useState(false);
 
     // SAVE TO CACHE
     useEffect(() => {
         const cacheObj = {
+            lastSearchDestination: destName,
             transport, hotels, events, heroImage,
             confirmedFlight, confirmedHotel, addedEvents,
             miniMapData, aiItinerary
         };
-        sessionStorage.setItem('travex_results_cache', JSON.stringify(cacheObj));
-    }, [transport, hotels, events, heroImage, confirmedFlight, confirmedHotel, addedEvents, miniMapData, aiItinerary]);
-
-    // DYNAMIC DATA
-    const getName = (data) => data?.name || data || "Destination";
-    const rawDestName = searchData ? getName(searchData.toCity) : "Destination";
-    const originName = searchData ? getName(searchData.fromCity) : "Origin";
-    const destName = rawDestName.replace(/\b(INTL|INTERNATIONAL|AIRPORT|AIR PORT)\b/gi, "").trim();
-    const arrivalDate = searchData?.departDate;
-    const departureDate = searchData?.returnDate || new Date(new Date(arrivalDate).setDate(new Date(arrivalDate).getDate() + 3)).toISOString().split('T')[0];
-    const nights = calculateNights(arrivalDate, departureDate);
-
-    const journeyCurrency = searchData?.currency || 'INR';
-    const journeySymbol = journeyCurrency === 'USD' ? '$' : journeyCurrency === 'EUR' ? '€' : journeyCurrency === 'GBP' ? '£' : '₹';
+        localStorage.setItem('travex_results_cache', JSON.stringify(cacheObj));
+    }, [destName, transport, hotels, events, heroImage, confirmedFlight, confirmedHotel, addedEvents, miniMapData, aiItinerary]);
 
     // SELECTION TOGGLES
-    const toggleFlight = (flight) => { if (confirmedFlight?.id === flight.id) { setConfirmedFlight(null); setAiItinerary(null); } else setConfirmedFlight(flight); };
-    const toggleHotel = (hotel) => { if (confirmedHotel?.id === hotel.id) { setConfirmedHotel(null); setAiItinerary(null); } else setConfirmedHotel(hotel); };
-    const toggleEvent = (event) => {
-        if (addedEvents.some(e => e.id === event.id)) {
-            setAddedEvents(addedEvents.filter(e => e.id !== event.id));
+    const toggleFlight = (flight) => { 
+        if (confirmedFlight?.id === flight.id) { 
+            setConfirmedFlight(null); 
+            setAiItinerary(null); 
+            setMiniMapData(null);
         } else {
-            setAddedEvents([...addedEvents, event]);
+            setConfirmedFlight(flight);
+            setAiItinerary(null);
+            setMiniMapData(null);
         }
     };
+    const toggleHotel = (hotel) => { 
+        if (confirmedHotel?.id === hotel.id) { 
+            setConfirmedHotel(null); 
+            setAiItinerary(null); 
+            setMiniMapData(null);
+        } else {
+            setConfirmedHotel(hotel);
+            setAiItinerary(null);
+            setMiniMapData(null);
+        }
+    };
+    const [toastMsg, setToastMsg] = useState(null);
+    const showToast = (msg) => {
+        setToastMsg(msg);
+        setTimeout(() => setToastMsg(null), 3000);
+    };
+
+    const toggleEvent = (event) => {
+        const isAdded = addedEvents.some(e => e.id === event.id);
+
+        if (isAdded) {
+            // REMOVE from addedEvents
+            setAddedEvents(prev => prev.filter(e => e.id !== event.id));
+
+            // REMOVE from aiItinerary if it exists
+            if (aiItinerary?.daily_plan) {
+                setAiItinerary(prev => ({
+                    ...prev,
+                    daily_plan: prev.daily_plan.map(day => ({
+                        ...day,
+                        activities: day.activities.filter(a => a._eventId !== event.id)
+                    }))
+                }));
+            }
+            showToast(`"${event.title}" removed from your plan.`);
+        } else {
+            // ADD to addedEvents
+            setAddedEvents(prev => [...prev, event]);
+
+            // INJECT into aiItinerary if it has been generated
+            if (aiItinerary?.daily_plan?.length > 0) {
+                // Spread across days: pick the day with the fewest activities
+                const dayPlan = [...aiItinerary.daily_plan];
+                const targetDayIndex = dayPlan.reduce((minIdx, day, i, arr) =>
+                    day.activities.length < arr[minIdx].activities.length ? i : minIdx, 0);
+
+                const newActivity = {
+                    _eventId: event.id,            // internal marker so we can remove it
+                    time: event.date ? "Evening" : "19:00",
+                    activity: event.title,
+                    type: "sightseeing",
+                    description: event.description || `${event.category} event at ${event.date || "your destination"}.`,
+                    cost_estimate: parseFloat((event.price || "0").replace(/[^0-9.]/g, '')) || 0,
+                    booking_url: event.url || null,
+                    transit_instruction: "Check your event ticket for venue directions.",
+                    localness_signal: 0.7,
+                    latitude: null,
+                    longitude: null,
+                };
+
+                const updatedPlan = dayPlan.map((day, i) =>
+                    i === targetDayIndex
+                        ? { ...day, activities: [...day.activities, newActivity] }
+                        : day
+                );
+                setAiItinerary(prev => ({ ...prev, daily_plan: updatedPlan }));
+                showToast(`"${event.title}" added to Day ${targetDayIndex + 1}! 🗓️`);
+            } else {
+                showToast(`"${event.title}" saved! Generate an itinerary to see it in your plan.`);
+            }
+        }
+    };
+
 
     // --- 1. INITIAL DATA FETCH ---
     useEffect(() => {
@@ -415,56 +616,20 @@ const ResultsPage = ({ searchData, onBack }) => {
         const loadData = async () => {
             setLoading(true);
             try {
-                const UNSPLASH_KEY = "dNatqPd4crOANylynm5YUCkNG2NAfUjmMdwirbo7xDo";
-
-                // 1. BANNER IMAGE
-                const primaryQuery = `${destName} tourism`;
-                fetch(`https://api.unsplash.com/search/photos?query=${encodeURIComponent(primaryQuery)}&orientation=landscape&per_page=1&client_id=${UNSPLASH_KEY}`)
-                    .then(res => res.json())
-                    .then(data => {
-                        if (data.results && data.results.length > 0) setHeroImage(data.results[0].urls.regular);
-                        else {
-                            fetch(`https://api.unsplash.com/search/photos?query=Paris%20travel&orientation=landscape&per_page=1&client_id=${UNSPLASH_KEY}`)
-                                .then(r => r.json()).then(d => { if (d.results && d.results.length > 0) setHeroImage(d.results[0].urls.regular); });
-                        }
-                    }).catch(err => console.error(err));
-
-                // 2. MAIN DATA
-                const [transportData, hotelData, eventData] = await Promise.all([
-                    fetchFlights(originName, destName, searchData.departDate, searchData.currency),
-                    fetchHotels(destName, searchData.budget, searchData.currency, arrivalDate, departureDate),
-                    fetchEvents(destName, searchData.departDate)
-                ]);
-
-                // 3. HOTEL & EVENT IMAGES
-                if (UNSPLASH_KEY) {
-                    if (Array.isArray(hotelData) && hotelData.length > 0) {
-                        const hotelQuery = `${destName} luxury hotel interior`;
-                        fetch(`https://api.unsplash.com/search/photos?query=${encodeURIComponent(hotelQuery)}&per_page=${hotelData.length}&client_id=${UNSPLASH_KEY}`)
-                            .then(r => r.json()).then(d => {
-                                if (d.results) hotelData.forEach((h, i) => { if (d.results[i]) h.image = d.results[i].urls.regular; });
-                            });
-                    }
-                    if (Array.isArray(eventData) && eventData.length > 0) {
-                        const eventsNeedingImages = eventData.filter(e => !e.image);
-                        if (eventsNeedingImages.length > 0) {
-                            const eventQuery = `${destName} culture festival`;
-                            fetch(`https://api.unsplash.com/search/photos?query=${encodeURIComponent(eventQuery)}&per_page=${eventsNeedingImages.length}&client_id=${UNSPLASH_KEY}`)
-                                .then(r => r.json()).then(d => {
-                                    if (d.results) eventsNeedingImages.forEach((e, i) => { if (d.results[i]) e.image = d.results[i].urls.small; });
-                                });
-                        }
-                    }
-                }
-
-                setTransport(transportData);
-                setHotels(Array.isArray(hotelData) ? hotelData : []);
-                setEvents(Array.isArray(eventData) ? eventData : []);
-            } catch (err) { console.error(err); }
-            finally { setLoading(false); }
+                const results = await searchAll(searchData);
+                
+                if (results.heroImage) setHeroImage(results.heroImage);
+                setTransport(results.transportData || { type: 'none', results: [] });
+                setHotels(results.hotelData || []);
+                setEvents(results.eventData || []);
+            } catch (err) { 
+                console.error("Aggregation Fetch Error:", err); 
+            } finally { 
+                setLoading(false); 
+            }
         };
         loadData();
-    }, [searchData, destName, arrivalDate, departureDate, originName, hotels.length]);
+    }, [searchData, hotels.length]);
 
     // --- 2. AI UNLOCK LOGIC ---
     useEffect(() => {
@@ -476,11 +641,52 @@ const ResultsPage = ({ searchData, onBack }) => {
                     destination: destName,
                     dates: { arrival: arrivalDate, departure: departureDate },
                     hotel: confirmedHotel,
+                    flight: confirmedFlight, // <--- ADDED FLIGHT
                     budget: { total: searchData.budget, currency: "USD", remaining: 2000 },
                     interests: searchData.interests || []
                 };
-                const plan = await fetchItinerary(payload);
-                setAiItinerary(plan);
+
+                let accumulatedJson = "";
+                
+                // Helper to attempt parsing incomplete JSON
+                const tryParsePartialJSON = (jsonString) => {
+                    try {
+                        return JSON.parse(jsonString);
+                    } catch (e) {
+                        // Very rough fallback: close arrays/objects
+                        try {
+                            // If it ends in a trailing comma, remove it
+                            let cleaned = jsonString.replace(/,\s*$/, '');
+                            // If we opened an array of days or activities, close them
+                            const openBraces = (cleaned.match(/\{/g) || []).length - (cleaned.match(/\}/g) || []).length;
+                            const openBrackets = (cleaned.match(/\[/g) || []).length - (cleaned.match(/\]/g) || []).length;
+                            
+                            // Naive auto-close
+                            if (cleaned.endsWith('"')) cleaned += '"';
+                            for(let i=0; i<openBrackets; i++) cleaned += ']';
+                            for(let i=0; i<openBraces; i++) cleaned += '}';
+                            
+                            return JSON.parse(cleaned);
+                        } catch (fallbackErr) {
+                            return null; // Could not parse yet
+                        }
+                    }
+                };
+
+                await fetchItineraryStream(payload, (chunk) => {
+                    accumulatedJson += chunk;
+                    const partialPlan = tryParsePartialJSON(accumulatedJson);
+                    if (partialPlan && partialPlan.daily_plan) {
+                        setAiItinerary(partialPlan);
+                    }
+                });
+                
+                // Final guaranteed parse once stream completes
+                try {
+                    setAiItinerary(JSON.parse(accumulatedJson));
+                } catch(e) {
+                    console.error("Final parse failed, using last known good state.");
+                }
                 setPlannerLoading(false);
                 setTimeout(() => {
                     const airline = confirmedFlight.validatingAirlineCodes?.[0] || 'Airline';
@@ -502,13 +708,30 @@ const ResultsPage = ({ searchData, onBack }) => {
     if (!searchData) return null;
 
     return (
-        <div className="selection:bg-[#B89A6A]/20 pb-32 font-sans bg-[#F4F1EB] text-[#1C1916] min-h-screen">
-            <ChatBot destination={destName} />
+        <div className="selection:bg-[#B89A6A]/20 pb-16 font-sans bg-[#F4F1EB] text-[#1C1916] min-h-screen">
+            <ChatBot destination={destName} aiItinerary={aiItinerary} setAiItinerary={setAiItinerary} />
+
+            {/* TOAST NOTIFICATION */}
+            <AnimatePresence>
+                {toastMsg && (
+                    <motion.div
+                        key="toast"
+                        initial={{ opacity: 0, y: 20, x: '-50%' }}
+                        animate={{ opacity: 1, y: 0, x: '-50%' }}
+                        exit={{ opacity: 0, y: 20, x: '-50%' }}
+                        transition={{ type: 'spring', stiffness: 400, damping: 28 }}
+                        className="fixed bottom-24 left-1/2 z-[200] bg-[#1C1916] text-[#FDFCFA] px-6 py-3 rounded-2xl shadow-[0_8px_32px_rgba(28,25,22,0.4)] text-sm font-medium tracking-wide flex items-center gap-2 border border-[#B89A6A]/30"
+                    >
+                        <span className="text-[#B89A6A]">✓</span> {toastMsg}
+                    </motion.div>
+                )}
+            </AnimatePresence>
 
             {/* MODALS */}
             <FlightModal isOpen={isFlightModalOpen} onClose={() => setIsFlightModalOpen(false)} flights={transport.results} selectedId={confirmedFlight?.id} onSelect={toggleFlight} />
             <HotelModal isOpen={isHotelModalOpen} onClose={() => setIsHotelModalOpen(false)} hotels={hotels} nights={nights} selectedId={confirmedHotel?.id} onSelect={toggleHotel} />
             <EventModal isOpen={isEventModalOpen} onClose={() => setIsEventModalOpen(false)} events={events} addedEvents={addedEvents} onToggle={toggleEvent} />
+
 
             {loading ? (
                 <div className="h-screen flex flex-col items-center justify-center z-50 fixed inset-0 bg-[#F4F1EB]">
@@ -667,7 +890,6 @@ const ResultsPage = ({ searchData, onBack }) => {
                                     </div>
                                 ) : (
                                     <>
-                                        <Lock className="w-10 h-10 text-[#E8E4DC] mb-6" />
                                         <h3 className="serif-text text-[#1C1916] font-light text-3xl tracking-tight">Itinerary Awaits</h3>
                                         <p className="text-[#9C9690] mt-2 max-w-md text-sm tracking-wide">Select a flight and hotel above to unlock your personalised daily plan.</p>
                                     </>
@@ -684,7 +906,19 @@ const ResultsPage = ({ searchData, onBack }) => {
                         )}
                     </div>
 
-                    {/* Floating Summary Cart Wrapper (Optional, implemented in HTML file, could add it here if needed later) */}
+
+                    {/* 7. CHECKOUT BAR — inline at the bottom of the page */}
+                    {confirmedFlight && confirmedHotel && (
+                        <CheckoutBar
+                            flight={confirmedFlight}
+                            hotel={confirmedHotel}
+                            currencySymbol={journeySymbol}
+                            nights={nights}
+                            destName={destName}
+                            originName={originName}
+                            departDate={arrivalDate}
+                        />
+                    )}
 
                 </div>
             )}

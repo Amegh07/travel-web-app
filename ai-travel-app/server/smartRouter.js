@@ -162,3 +162,42 @@ export async function runAgent(role, systemPrompt, userContent) {
     throw error;
   }
 }
+
+// ==========================================
+// 🌊 STREAMING AGENT EXECUTION
+// ==========================================
+export async function* runAgentStream(role, systemPrompt, userContent) {
+  const { client, keyId } = keyManager.getGroqClient(role);
+
+  let model = ModelConfig.FAST;
+  let temp = 0.7;
+  let maxTokens = 1500;
+
+  if (role === AgentRole.ARCHITECT || role === AgentRole.MAPPING || role === AgentRole.INSPECTOR) {
+    model = ModelConfig.REASONING;
+    temp = 0.1;
+    maxTokens = 4096;
+  } else if (role === AgentRole.GUIDE) {
+    model = ModelConfig.GENERAL;
+    temp = 0.6;
+    maxTokens = 2048;
+  }
+
+  console.log(`🌊 Booting Streaming Agent: [${role}] using Key [${keyId}] on Model [${model}]`);
+
+  const stream = await client.chat.completions.create({
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userContent }
+    ],
+    model: model,
+    temperature: temp,
+    max_tokens: maxTokens,
+    stream: true,
+  });
+
+  for await (const chunk of stream) {
+    const text = chunk.choices[0]?.delta?.content || "";
+    if (text) yield text;
+  }
+}
