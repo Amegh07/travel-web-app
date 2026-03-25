@@ -163,26 +163,37 @@ app.get('/api/city-search', async (req, res) => {
     } catch { res.json([]); }
 });
 
-// --- ✈️ ROUTE 2: FLIGHT SEARCH ---
+// --- ✈️ ROUTE 2: FLIGHT SEARCH (One-Way + Round Trip) ---
 app.get('/api/flights', async (req, res) => {
     try {
-        const { origin, destination, date, currency } = req.query;
-        console.log(`✈️  Starting Flight Search: ${origin} -> ${destination} (${currency || 'default currency'})`);
+        const { origin, destination, date, returnDate, tripType, currency } = req.query;
+        console.log(`✈️  Flight Search: ${origin} -> ${destination} | type: ${tripType || 'one-way'} | return: ${returnDate || 'N/A'}`);
 
         const originData = await resolveCityData(origin);
-        const destData = await resolveCityData(destination);
+        const destData   = await resolveCityData(destination);
+        const amadeus    = keyManager.getAmadeusClient("FLIGHTS");
 
-        const amadeus = keyManager.getAmadeusClient("FLIGHTS");
-        const response = await amadeus.shopping.flightOffersSearch.get({
-            originLocationCode: originData.iata,
+        const params = {
+            originLocationCode:      originData.iata,
             destinationLocationCode: destData.iata,
-            departureDate: date,
-            adults: '1',
-            max: '5',
-            ...(currency && { currencyCode: currency }) // Amadeus native currency conversion
+            departureDate:           date,
+            adults:                  '1',
+            max:                     '10',
+            ...(currency && { currencyCode: currency }),
+            // Only add returnDate if it's a round trip AND returnDate exists
+            ...(tripType === 'round' && returnDate && { returnDate })
+        };
+
+        const response = await amadeus.shopping.flightOffersSearch.get(params);
+        res.json({
+            type:    tripType === 'round' ? 'round_trip' : 'one_way',
+            results: response.data,
+            journey: { originHub: originData.iata, destHub: destData.iata }
         });
-        res.json({ type: 'multi_modal', results: response.data, journey: { originHub: originData.iata, destHub: destData.iata } });
-    } catch { res.json({ type: 'none', results: [] }); }
+    } catch (err) {
+        console.error('Flight search error:', err.message);
+        res.json({ type: 'none', results: [] });
+    }
 });
 
 // --- 🏨 ROUTE 3: HOTEL SEARCH (TWO-STEP: GEOCODE + REAL PRICING) ---
@@ -503,7 +514,8 @@ Follow this level of specificity, professional tone, and format exactly for ${de
             res.end();
         } catch (streamErr) {
             console.error("Stream Generator Error:", streamErr);
-            res.write(`data: ${JSON.stringify({ error: "Stream aborted" })}\n\n`);
+            res.write(`data: ${JSON.stringify({ error: "AI temporarily unavailable" })}\n\n`);
+            res.write(`data: [DONE]\n\n`);
             res.end();
         }
 
@@ -532,10 +544,14 @@ app.post('/api/events', async (req, res) => {
         // 2. Fallback to AI if no real events found
         console.log("   🤖 Ticketmaster empty. Asking AI Guide...");
         const result = await runAgent(AgentRole.GUIDE,
-            "You are a local guide. Return strict JSON array: [{ id, title, category, description, price, date }]",
+            `You are a local guide. Return a JSON object in this format exactly:
+{ "events": [{ "id": "1", "title": "Event Name", "category": "Music", "description": "Description", "price": "Free", "date": "2026-04-01" }] }. Return ONLY valid JSON.`,
             `Find 3 generic cultural activities in ${destination} for ${date}.`
         );
-        res.json(JSON.parse(result));
+        const parsed = JSON.parse(result);
+        // Handle both array and object responses
+        const events = Array.isArray(parsed) ? parsed : (parsed.events || parsed.activities || []);
+        res.json(events);
 
     } catch { res.json([]); }
 });
@@ -579,48 +595,52 @@ app.post('/api/search-all', async (req, res) => {
             toCity,
             departDate,
             returnDate,
+            tripType  = 'round',
             budget,
-            currency = 'INR',
+            currency  = 'INR',
             interests = []
         } = searchData || {};
 
-        // Resolve city names/codes for API calls
         const originName = typeof fromCity === 'object' ? (fromCity.name || fromCity.code) : fromCity;
-        const destName = typeof toCity === 'object' ? (toCity.name || toCity.code) : toCity;
-        const originCode = typeof fromCity === 'object' ? (fromCity.code || fromCity.name) : fromCity;
-        const destCode = typeof toCity === 'object' ? (toCity.code || toCity.name) : toCity;
+        const destName   = typeof toCity   === 'object' ? (toCity.name   || toCity.code)   : toCity;
+        const originCode = typeof fromCity === 'object' ? (fromCity.code || fromCity.name)  : fromCity;
+        const destCode   = typeof toCity   === 'object' ? (toCity.code   || toCity.name)    : toCity;
 
-        // Calculate check-out date (fallback: depart + 3 days)
-        const checkIn = departDate;
-        const checkOut = returnDate || (() => {
-            const d = new Date(departDate);
-            d.setDate(d.getDate() + 3);
-            return d.toISOString().split('T')[0];
-        })();
+        const checkIn  = departDate;
+        // For one-way: use depart date + 3 days just for hotel/itinerary duration purposes
+        const checkOut = (tripType === 'round' && returnDate)
+            ? returnDate
+            : (() => {
+                const d = new Date(departDate);
+                d.setDate(d.getDate() + 3);
+                return d.toISOString().split('T')[0];
+            })();
 
-        console.log(`\n📦 /api/search-all triggered`);
-        console.log(`   ✈️  ${originName} (${originCode}) → ${destName} (${destCode})`);
-        console.log(`   📅  ${checkIn} → ${checkOut} | ${currency} ${budget}`);
+        const isRoundTrip = tripType === 'round' && !!returnDate;
 
-        // --- Run all three fetches IN PARALLEL for speed ---
+        console.log(`\n📦 /api/search-all | ${tripType} | ${originName} → ${destName} | ${checkIn}${isRoundTrip ? ' → ' + checkOut : ''}`);
+
         const [flightResult, hotelResult, eventResult] = await Promise.allSettled([
 
-            // 1. FLIGHTS
+            // 1. FLIGHTS — pass returnDate only for round trips
             (async () => {
                 const originData = await resolveCityData(originCode);
-                const destData = await resolveCityData(destCode);
-                const amadeus = keyManager.getAmadeusClient("FLIGHTS");
+                const destData   = await resolveCityData(destCode);
+                const amadeus    = keyManager.getAmadeusClient("FLIGHTS");
 
-                const response = await amadeus.shopping.flightOffersSearch.get({
-                    originLocationCode: originData.iata,
+                const params = {
+                    originLocationCode:      originData.iata,
                     destinationLocationCode: destData.iata,
-                    departureDate: checkIn,
-                    adults: '1',
-                    max: '10',
-                    ...(currency && { currencyCode: currency })
-                });
+                    departureDate:           checkIn,
+                    adults:                  '1',
+                    max:                     '10',
+                    ...(currency && { currencyCode: currency }),
+                    ...(isRoundTrip && { returnDate: checkOut })
+                };
+
+                const response = await amadeus.shopping.flightOffersSearch.get(params);
                 return {
-                    type: 'multi_modal',
+                    type:    isRoundTrip ? 'round_trip' : 'one_way',
                     results: response.data,
                     journey: { originHub: originData.iata, destHub: destData.iata }
                 };
@@ -633,25 +653,24 @@ app.post('/api/search-all', async (req, res) => {
 
                 const amadeus = keyManager.getAmadeusClient("HOTELS");
                 const geoResponse = await amadeus.referenceData.locations.hotels.byGeocode.get({
-                    latitude: cityData.geo.latitude,
-                    longitude: cityData.geo.longitude,
-                    radius: 10,
+                    latitude:   cityData.geo.latitude,
+                    longitude:  cityData.geo.longitude,
+                    radius:     10,
                     radiusUnit: 'KM',
                 });
 
-                const sorted = [...geoResponse.data].sort((a, b) => (a.distance?.value || 99) - (b.distance?.value || 99));
+                const sorted    = [...geoResponse.data].sort((a, b) => (a.distance?.value || 99) - (b.distance?.value || 99));
                 const topHotels = sorted.slice(0, 20);
-                const hotelIds = topHotels.map(h => h.hotelId).join(',');
+                const hotelIds  = topHotels.map(h => h.hotelId).join(',');
 
-                // Try real pricing
                 let offersMap = {};
                 if (checkIn && checkOut && hotelIds) {
                     try {
                         const offersResponse = await amadeus.shopping.hotelOffersSearch.get({
                             hotelIds,
-                            checkInDate: checkIn,
+                            checkInDate:  checkIn,
                             checkOutDate: checkOut,
-                            adults: '1',
+                            adults:       '1',
                             currencyCode: currency,
                             bestRateOnly: true
                         });
@@ -664,36 +683,37 @@ app.post('/api/search-all', async (req, res) => {
                     }
                 }
 
-                const nights = Math.max(1, Math.ceil(Math.abs(new Date(checkOut) - new Date(checkIn)) / (1000 * 60 * 60 * 24)));
-                const dailyBudget = parseFloat(budget || 5000) / nights;
+                const nights     = Math.max(1, Math.ceil(Math.abs(new Date(checkOut) - new Date(checkIn)) / (1000 * 60 * 60 * 24)));
+                const totalBudget = parseFloat(budget || 5000);
+                const dailyBudget = totalBudget / nights;
                 const currencySymbol = currency === 'USD' ? '$' : currency === 'EUR' ? '€' : '₹';
 
                 let estimatedPrice;
-                if (currency === 'USD') estimatedPrice = dailyBudget >= 800 ? 350 : dailyBudget >= 300 ? 180 : 90;
+                if (currency === 'USD')      estimatedPrice = dailyBudget >= 800 ? 350 : dailyBudget >= 300 ? 180 : 90;
                 else if (currency === 'EUR') estimatedPrice = dailyBudget >= 800 ? 300 : dailyBudget >= 300 ? 150 : 80;
-                else estimatedPrice = dailyBudget >= 60000 ? 15000 : dailyBudget >= 20000 ? 6000 : dailyBudget >= 8000 ? 3000 : 1500;
+                else                         estimatedPrice = dailyBudget >= 60000 ? 15000 : dailyBudget >= 20000 ? 6000 : dailyBudget >= 8000 ? 3000 : 1500;
 
-                const randomizePrice = (base, idString) => {
-                    const hash = Array.from(idString).reduce((acc, char) => acc + char.charCodeAt(0), 0);
+                const randomizePrice = (base, id) => {
+                    const hash = Array.from(id).reduce((a, c) => a + c.charCodeAt(0), 0);
                     return Math.floor(base * (1 + ((hash % 40) - 20) / 100));
                 };
 
                 return topHotels.slice(0, 6).map(h => {
-                    const realTotal = offersMap[h.hotelId];
+                    const realTotal   = offersMap[h.hotelId];
                     let pricePerNight = realTotal ? (realTotal / nights) : randomizePrice(estimatedPrice, h.hotelId);
 
                     if (currency === 'INR' && pricePerNight < 1000) pricePerNight = 1000 + Math.random() * 500;
-                    if (currency === 'USD' && pricePerNight < 50) pricePerNight = 50 + Math.random() * 20;
-                    if (currency === 'EUR' && pricePerNight < 50) pricePerNight = 50 + Math.random() * 20;
+                    if (currency === 'USD' && pricePerNight < 50)   pricePerNight = 50   + Math.random() * 20;
+                    if (currency === 'EUR' && pricePerNight < 50)   pricePerNight = 50   + Math.random() * 20;
 
                     return {
-                        id: h.hotelId,
-                        name: h.name,
-                        image: `https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&w=800&q=80`,
-                        rating: h.rating || '4.0',
-                        price: `${currencySymbol}${Math.floor(pricePerNight)}/night`,
+                        id:          h.hotelId,
+                        name:        h.name,
+                        image:       `https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&w=800&q=80`,
+                        rating:      h.rating || '4.0',
+                        price:       `${currencySymbol}${Math.floor(pricePerNight)}/night`,
                         isRealPrice: !!realTotal,
-                        distance: `${h.distance?.value?.toFixed(1) || "1"} ${h.distance?.unit || "KM"} from center`
+                        distance:    `${h.distance?.value?.toFixed(1) || "1"} ${h.distance?.unit || "KM"} from center`
                     };
                 });
             })(),
@@ -703,44 +723,27 @@ app.post('/api/search-all', async (req, res) => {
                 const realEvents = await fetchTicketmasterEvents(destName, checkIn);
                 if (realEvents) return realEvents;
 
-                // AI fallback
                 const result = await runAgent(
                     AgentRole.GUIDE,
-                    "You are a local guide. Return strict JSON array: [{ id, title, category, description, price, date }]. Return ONLY valid JSON, nothing else.",
-                    `Find 4 interesting cultural activities or events in ${destName} around ${checkIn}. Mix music, food, arts, and local experiences.`
+                    `You are a local guide. Return a JSON object: { "events": [{ "id": "1", "title": "Event Name", "category": "Music", "description": "Description", "price": "Free", "date": "2026-04-01" }] }. Return ONLY valid JSON.`,
+                    `Find 4 interesting cultural activities or events in ${destName} around ${checkIn}.`
                 );
-                return JSON.parse(result);
+                const parsed = JSON.parse(result);
+                return Array.isArray(parsed) ? parsed : (parsed.events || parsed.activities || []);
             })()
         ]);
 
-        // --- Unwrap settled results safely ---
-        const transportData = flightResult.status === 'fulfilled'
-            ? flightResult.value
-            : { type: 'none', results: [] };
+        const transportData = flightResult.status === 'fulfilled' ? flightResult.value : { type: 'none', results: [] };
+        const hotelData     = hotelResult.status  === 'fulfilled' ? hotelResult.value  : [];
+        const eventData     = eventResult.status  === 'fulfilled' ? eventResult.value  : [];
+        const heroImage     = `https://images.unsplash.com/photo-1499856871958-5b9627545d1a?auto=format&fit=crop&w=1600&q=80`;
 
-        const hotelData = hotelResult.status === 'fulfilled'
-            ? hotelResult.value
-            : [];
-
-        const eventData = eventResult.status === 'fulfilled'
-            ? eventResult.value
-            : [];
-
-        // --- Hero image via Unsplash (free, no key needed) ---
-        const heroImage = `https://images.unsplash.com/photo-1499856871958-5b9627545d1a?auto=format&fit=crop&w=1600&q=80`;
-
-        console.log(`   ✅ search-all complete: ${transportData.results?.length || 0} flights, ${hotelData.length} hotels, ${eventData.length} events`);
-
+        console.log(`   ✅ Done: ${transportData.results?.length || 0} flights, ${hotelData.length} hotels, ${eventData.length} events`);
         res.json({ transportData, hotelData, eventData, heroImage });
 
     } catch (error) {
         console.error('❌ /api/search-all Error:', error.message);
-        res.json({
-            transportData: { type: 'none', results: [] },
-            hotelData: [],
-            eventData: [],
-            heroImage: null
-        });
+        res.json({ transportData: { type: 'none', results: [] }, hotelData: [], eventData: [], heroImage: null });
     }
 });
 

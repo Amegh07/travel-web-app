@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useRef } from 'react';
 import {
     ArrowLeft, Plane, Hotel, Calendar, DollarSign, Loader2, Car,
     Ticket, MapPin, X, CheckCircle, ExternalLink,
@@ -14,17 +14,17 @@ import { motion, AnimatePresence } from 'framer-motion';
 const formatDuration = (ptString) => ptString ? ptString.replace("PT", "").toLowerCase() : "";
 const getAirlineLogo = (code) => code ? `https://pics.avs.io/200/200/${code}.png` : '';
 const getAirlineLogoFallback = () => `https://images.unsplash.com/photo-1436491865332-7a61a109cc05?w=100&q=60`;
-// Generate a contextual image for hotels - uses server-assigned image first, then picsum stable seed
+// Generate a contextual image for hotels - uses server-assigned image first, then Unsplash
 const getHotelImage = (hotel) => {
     if (hotel.image) return hotel.image;
-    // picsum with seed based on hotel name gives stable, beautiful photos
-    const seed = (hotel.id || hotel.name || 'hotel').split('').reduce((a, c) => a + c.charCodeAt(0), 0) % 800;
-    return `https://picsum.photos/seed/${seed}/800/500`;
+    // Unsplash source API — searches by hotel name for contextual images
+    const query = encodeURIComponent((hotel.name || 'luxury hotel') + ' hotel');
+    return `https://source.unsplash.com/800x500/?${query}`;
 };
 // Generate contextual image for events - uses Ticketmaster image first, then picsum
 const getEventImage = (event) => {
     if (event.image) return event.image;
-    const seed = (event.id || event.title || 'event').split('').reduce((a, c) => a + c.charCodeAt(0), 0) % 800;
+    const seed = String(event.id || event.title || 'event').split('').reduce((a, c) => a + c.charCodeAt(0), 0) % 800;
     return `https://picsum.photos/seed/${seed}/800/500`;
 };
 const calculateNights = (start, end) => {
@@ -467,11 +467,25 @@ const ResultsPage = ({ searchData, onBack }) => {
     const rawDestName = searchData ? getName(searchData.toCity) : "Destination";
     const destName = rawDestName.replace(/\b(INTL|INTERNATIONAL|AIRPORT|AIR PORT)\b/gi, "").trim();
     const originName = searchData ? getName(searchData.fromCity) : "Origin";
-    const arrivalDate = searchData?.departDate;
-    const departureDate = searchData?.returnDate || new Date(new Date(arrivalDate).setDate(new Date(arrivalDate).getDate() + 3)).toISOString().split('T')[0];
+
+    // Properly handle one-way vs round trip
+    const tripType    = searchData?.tripType || 'round';
+    const isRoundTrip = tripType === 'round' && !!searchData?.returnDate;
+
+    const arrivalDate   = searchData?.departDate;
+    // One-way: no real return date — use +3 days only for hotel/itinerary duration
+    const departureDate = isRoundTrip
+        ? searchData.returnDate
+        : (() => {
+            const d = new Date(arrivalDate);
+            d.setDate(d.getDate() + 3);
+            return d.toISOString().split('T')[0];
+        })();
+
     const nights = calculateNights(arrivalDate, departureDate);
+
     const journeyCurrency = searchData?.currency || 'INR';
-    const journeySymbol = journeyCurrency === 'USD' ? '$' : journeyCurrency === 'EUR' ? '€' : journeyCurrency === 'GBP' ? '£' : '₹';
+    const journeySymbol   = journeyCurrency === 'USD' ? '$' : journeyCurrency === 'EUR' ? '€' : journeyCurrency === 'GBP' ? '£' : '₹';
 
     // CACHE INITIATION
     const getCache = () => {
@@ -490,7 +504,12 @@ const ResultsPage = ({ searchData, onBack }) => {
 
     const [transport, setTransport] = useState(() => initialCache.transport || { type: 'loading', data: [], journey: null });
     const [hotels, setHotels] = useState(() => initialCache.hotels || []);
-    const [events, setEvents] = useState(() => initialCache.events || []);
+    const [events, setEvents] = useState(() => {
+        const cached = initialCache.events;
+        if (Array.isArray(cached)) return cached;
+        if (cached && typeof cached === 'object') return cached.events || cached.activities || [];
+        return [];
+    });
     const [loading, setLoading] = useState(() => initialCache.hotels?.length > 0 ? false : true);
     const [heroImage, setHeroImage] = useState(() => initialCache.heroImage || null);
 
@@ -507,6 +526,7 @@ const ResultsPage = ({ searchData, onBack }) => {
     const [bridgeLoading, setBridgeLoading] = useState(false);
     const [aiItinerary, setAiItinerary] = useState(() => initialCache.aiItinerary || null);
     const [plannerLoading, setPlannerLoading] = useState(false);
+    const plannerHasFired = useRef(false);
 
     // SAVE TO CACHE
     useEffect(() => {
@@ -525,10 +545,12 @@ const ResultsPage = ({ searchData, onBack }) => {
             setConfirmedFlight(null); 
             setAiItinerary(null); 
             setMiniMapData(null);
+            plannerHasFired.current = false;
         } else {
             setConfirmedFlight(flight);
             setAiItinerary(null);
             setMiniMapData(null);
+            plannerHasFired.current = false;
         }
     };
     const toggleHotel = (hotel) => { 
@@ -536,10 +558,12 @@ const ResultsPage = ({ searchData, onBack }) => {
             setConfirmedHotel(null); 
             setAiItinerary(null); 
             setMiniMapData(null);
+            plannerHasFired.current = false;
         } else {
             setConfirmedHotel(hotel);
             setAiItinerary(null);
             setMiniMapData(null);
+            plannerHasFired.current = false;
         }
     };
     const [toastMsg, setToastMsg] = useState(null);
@@ -621,7 +645,8 @@ const ResultsPage = ({ searchData, onBack }) => {
                 if (results.heroImage) setHeroImage(results.heroImage);
                 setTransport(results.transportData || { type: 'none', results: [] });
                 setHotels(results.hotelData || []);
-                setEvents(results.eventData || []);
+                const rawEvents = results.eventData || [];
+                setEvents(Array.isArray(rawEvents) ? rawEvents : (rawEvents.events || rawEvents.activities || []));
             } catch (err) { 
                 console.error("Aggregation Fetch Error:", err); 
             } finally { 
@@ -631,77 +656,88 @@ const ResultsPage = ({ searchData, onBack }) => {
         loadData();
     }, [searchData, hotels.length]);
 
-    // --- 2. AI UNLOCK LOGIC ---
+    // --- 2. AI UNLOCK LOGIC (ref-guarded to prevent infinite loop) ---
     useEffect(() => {
-        if (confirmedFlight && confirmedHotel && !aiItinerary && !plannerLoading) {
+        if (confirmedFlight && confirmedHotel && !aiItinerary && !plannerLoading && !plannerHasFired.current) {
+            plannerHasFired.current = true; // 🔒 Lock immediately — prevents re-entry
             setPlannerLoading(true);
             setBridgeLoading(true);
+
             const buildPlan = async () => {
-                const payload = {
-                    destination: destName,
-                    dates: { arrival: arrivalDate, departure: departureDate },
-                    hotel: confirmedHotel,
-                    flight: confirmedFlight, // <--- ADDED FLIGHT
-                    budget: { total: searchData.budget, currency: "USD", remaining: 2000 },
-                    interests: searchData.interests || []
-                };
-
-                let accumulatedJson = "";
-                
-                // Helper to attempt parsing incomplete JSON
-                const tryParsePartialJSON = (jsonString) => {
-                    try {
-                        return JSON.parse(jsonString);
-                    } catch (e) {
-                        // Very rough fallback: close arrays/objects
-                        try {
-                            // If it ends in a trailing comma, remove it
-                            let cleaned = jsonString.replace(/,\s*$/, '');
-                            // If we opened an array of days or activities, close them
-                            const openBraces = (cleaned.match(/\{/g) || []).length - (cleaned.match(/\}/g) || []).length;
-                            const openBrackets = (cleaned.match(/\[/g) || []).length - (cleaned.match(/\]/g) || []).length;
-                            
-                            // Naive auto-close
-                            if (cleaned.endsWith('"')) cleaned += '"';
-                            for(let i=0; i<openBrackets; i++) cleaned += ']';
-                            for(let i=0; i<openBraces; i++) cleaned += '}';
-                            
-                            return JSON.parse(cleaned);
-                        } catch (fallbackErr) {
-                            return null; // Could not parse yet
-                        }
-                    }
-                };
-
-                await fetchItineraryStream(payload, (chunk) => {
-                    accumulatedJson += chunk;
-                    const partialPlan = tryParsePartialJSON(accumulatedJson);
-                    if (partialPlan && partialPlan.daily_plan) {
-                        setAiItinerary(partialPlan);
-                    }
-                });
-                
-                // Final guaranteed parse once stream completes
                 try {
-                    setAiItinerary(JSON.parse(accumulatedJson));
-                } catch(e) {
-                    console.error("Final parse failed, using last known good state.");
-                }
-                setPlannerLoading(false);
-                setTimeout(() => {
-                    const airline = confirmedFlight.validatingAirlineCodes?.[0] || 'Airline';
-                    setMiniMapData({
-                        origin: `${airline} Terminal`,
-                        destination: confirmedHotel.name,
-                        distance: "24 km", duration: "35 min", traffic: "Light Traffic",
-                        routeUrl: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(confirmedHotel.name)}`
+                    const totalBudget  = parseFloat(searchData?.budget || 2000);
+                    const flightCost   = parseFloat(confirmedFlight?.price?.total || 0);
+                    const hotelCost    = parseFloat(confirmedHotel?.price?.replace(/[^0-9.]/g, '') || 0) * nights;
+                    const remaining    = Math.max(500, totalBudget - flightCost - hotelCost);
+                    const dailyAllow   = Math.floor(remaining / Math.max(1, nights));
+
+                    const payload = {
+                        destination: destName,
+                        dates: { arrival: arrivalDate, departure: departureDate },
+                        hotel:  confirmedHotel,
+                        flight: confirmedFlight,
+                        budget: {
+                            total:          totalBudget,
+                            currency:       journeyCurrency,
+                            remaining:      remaining,
+                            dailyAllowance: dailyAllow
+                        },
+                        interests: searchData?.interests || [],
+                        tripType:  tripType
+                    };
+
+                    let accumulatedJson = "";
+                    
+                    const tryParsePartialJSON = (jsonString) => {
+                        try { return JSON.parse(jsonString); } catch (e) {
+                            try {
+                                let cleaned = jsonString.replace(/,\s*$/, '');
+                                const openBraces = (cleaned.match(/\{/g) || []).length - (cleaned.match(/\}/g) || []).length;
+                                const openBrackets = (cleaned.match(/\[/g) || []).length - (cleaned.match(/\]/g) || []).length;
+                                if (cleaned.endsWith('"')) cleaned += '"';
+                                for(let i=0; i<openBrackets; i++) cleaned += ']';
+                                for(let i=0; i<openBraces; i++) cleaned += '}';
+                                return JSON.parse(cleaned);
+                            } catch { return null; }
+                        }
+                    };
+
+                    await fetchItineraryStream(payload, (chunk) => {
+                        accumulatedJson += chunk;
+                        const partialPlan = tryParsePartialJSON(accumulatedJson);
+                        if (partialPlan && partialPlan.daily_plan) {
+                            setAiItinerary(partialPlan);
+                        }
                     });
-                    setBridgeLoading(false);
-                }, 1000);
+                    
+                    // Final guaranteed parse once stream completes
+                    try {
+                        const finalPlan = JSON.parse(accumulatedJson);
+                        if (finalPlan && finalPlan.daily_plan) {
+                            setAiItinerary(finalPlan);
+                        }
+                    } catch(e) {
+                        console.error("Final JSON parse failed:", e);
+                    }
+                } catch (outerErr) {
+                    console.error("buildPlan failed:", outerErr);
+                } finally {
+                    setPlannerLoading(false);
+                    setTimeout(() => {
+                        const airline = confirmedFlight.validatingAirlineCodes?.[0] || 'Airline';
+                        setMiniMapData({
+                            origin: `${airline} Terminal`,
+                            destination: confirmedHotel.name,
+                            distance: "24 km", duration: "35 min", traffic: "Light Traffic",
+                            routeUrl: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(confirmedHotel.name)}`
+                        });
+                        setBridgeLoading(false);
+                    }, 1000);
+                }
             };
             buildPlan();
         }
-    }, [confirmedFlight, confirmedHotel, aiItinerary, arrivalDate, departureDate, destName, plannerLoading, searchData]);
+    }, [confirmedFlight, confirmedHotel, aiItinerary, plannerLoading, arrivalDate, departureDate, destName, searchData]);
 
     const bgImage = heroImage || `https://images.unsplash.com/photo-1499856871958-5b9627545d1a?auto=format&fit=crop&w=1600&q=80`;
 
@@ -709,7 +745,7 @@ const ResultsPage = ({ searchData, onBack }) => {
 
     return (
         <div className="selection:bg-[#B89A6A]/20 pb-16 font-sans bg-[#F4F1EB] text-[#1C1916] min-h-screen">
-            <ChatBot destination={destName} aiItinerary={aiItinerary} setAiItinerary={setAiItinerary} />
+            <ChatBot destination={destName} aiItinerary={aiItinerary} setAiItinerary={setAiItinerary} hotels={hotels} transport={transport} journeySymbol={journeySymbol} onSelectHotel={toggleHotel} onSelectFlight={toggleFlight} />
 
             {/* TOAST NOTIFICATION */}
             <AnimatePresence>
@@ -762,7 +798,11 @@ const ResultsPage = ({ searchData, onBack }) => {
                                     </h1>
                                     <div className="flex flex-wrap gap-3">
                                         <span className="bg-[#FDFCFA]/80 backdrop-blur-md px-4 py-2 rounded-full border border-[#E8E4DC] shadow-sm flex items-center gap-2 text-[#1C1916] text-xs font-medium tracking-widest uppercase">
-                                            <Calendar className="w-3.5 h-3.5 text-[#B89A6A]" /> {arrivalDate} — {departureDate}
+                                            <Calendar className="w-3.5 h-3.5 text-[#B89A6A]" />
+                                            {isRoundTrip
+                                                ? `${arrivalDate} — ${departureDate}`
+                                                : `${arrivalDate} · One Way`
+                                            }
                                         </span>
                                     </div>
                                 </div>
@@ -784,7 +824,7 @@ const ResultsPage = ({ searchData, onBack }) => {
                                             <span className="text-[#1C1916] text-xs">{confirmedFlight ? `-${journeySymbol} ${parseFloat(confirmedFlight.price?.total || 0).toFixed(2)}` : 'Pending'}</span>
                                         </div>
                                         <div className="flex justify-between text-[#9C9690]">
-                                            <span className="flex items-center gap-1.5 text-xs tracking-wide"><Hotel className="w-3.5 h-3.5 text-[#2E3C3A]" />Hotel ({nights}n)</span>
+                                            <span className="flex items-center gap-1.5 text-xs tracking-wide"><Hotel className="w-3.5 h-3.5 text-[#2E3C3A]" />Hotel{isRoundTrip ? ` (${nights}n)` : ''}</span>
                                             <span className="text-[#1C1916] text-xs">{confirmedHotel ? `-${journeySymbol} ${(parseFloat(confirmedHotel.price.replace(/[^0-9.]/g, '')) * nights).toFixed(2)}` : 'Pending'}</span>
                                         </div>
                                         <div className="flex justify-between items-center text-[#9C9690]">
@@ -867,7 +907,7 @@ const ResultsPage = ({ searchData, onBack }) => {
                             <h2 className="serif-text text-3xl font-light text-[#1C1916] tracking-tight">Local Experiences</h2>
                         </div>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            {(events || []).slice(0, 4).map((ev, i) => <EventCard key={i} event={ev} isAdded={addedEvents.some(e => e.id === ev.id)} onToggle={toggleEvent} />)}
+                            {(Array.isArray(events) ? events : []).slice(0, 4).map((ev, i) => <EventCard key={i} event={ev} isAdded={addedEvents.some(e => e.id === ev.id)} onToggle={toggleEvent} />)}
                         </div>
                         <button onClick={() => setIsEventModalOpen(true)} className="w-full mt-6 py-4 rounded-xl border border-dashed border-[#E8E4DC] text-[#9C9690] hover:text-[#1C1916] hover:border-[#B89A6A]/50 bg-[#FDFCFA] transition-all text-[10px] tracking-widest uppercase font-medium flex items-center justify-center gap-2">
                             Discover more <ChevronDown className="w-4 h-4" />

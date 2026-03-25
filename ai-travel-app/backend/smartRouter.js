@@ -76,7 +76,7 @@ class KeyManager {
     // Fallback to reserve if primary is missing or blocked
     const keyData = (primary && !this.keyHealth.get(primary.id)?.isBlocked)
       ? primary
-      : GROQ_KEYS.find(k => k.isReserve);
+      : GROQ_KEYS.find(k => k.key && !this.keyHealth.get(k.id)?.isBlocked);
 
     if (!keyData?.key) throw new Error(`No available Groq Key for role: ${role}`);
 
@@ -185,19 +185,48 @@ export async function* runAgentStream(role, systemPrompt, userContent) {
 
   console.log(`🌊 Booting Streaming Agent: [${role}] using Key [${keyId}] on Model [${model}]`);
 
-  const stream = await client.chat.completions.create({
-    messages: [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: userContent }
-    ],
-    model: model,
-    temperature: temp,
-    max_tokens: maxTokens,
-    stream: true,
-  });
+  try {
+    const stream = await client.chat.completions.create({
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userContent }
+      ],
+      model: model,
+      temperature: temp,
+      max_tokens: maxTokens,
+      stream: true,
+    });
 
-  for await (const chunk of stream) {
-    const text = chunk.choices[0]?.delta?.content || "";
-    if (text) yield text;
+    for await (const chunk of stream) {
+      const text = chunk.choices[0]?.delta?.content || "";
+      if (text) yield text;
+    }
+  } catch (error) {
+    if (error.status === 429 && model !== ModelConfig.FAST) {
+      console.warn(`⚠️ Streaming 429 Rate Limit on [${model}]. Falling back to [${ModelConfig.FAST}]...`);
+      try {
+        const fallbackStream = await client.chat.completions.create({
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userContent }
+          ],
+          model: ModelConfig.FAST,
+          temperature: 0.5,
+          max_tokens: 1500,
+          stream: true,
+        });
+
+        for await (const chunk of fallbackStream) {
+          const text = chunk.choices[0]?.delta?.content || "";
+          if (text) yield text;
+        }
+        return;
+      } catch (fallbackError) {
+        console.error(`❌ Streaming Fallback also failed (${keyId}):`, fallbackError.message);
+        throw fallbackError;
+      }
+    }
+    console.error(`Streaming Agent Error (${keyId}):`, error.message);
+    throw error;
   }
 }

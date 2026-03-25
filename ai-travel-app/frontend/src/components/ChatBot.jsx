@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { X, Send, Loader2, MessageSquare, Wand2, RotateCcw, Plane, Clock } from 'lucide-react';
+import { X, Send, Loader2, MessageSquare, Wand2, RotateCcw, Plane, Clock, Hotel, Star } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { chatWithAI, modifyItinerary } from '../services/api';
 
@@ -42,51 +42,84 @@ const QUICK_EDITS = [
     { label: '💸 Stay on budget', prompt: 'Optimize the itinerary to reduce total activity costs by 20%.' },
 ];
 
-// Generative UI: Inline Flight Component
-const FlightComponent = ({ data }) => {
-    if (!data) return null;
+// Inline Hotel Card for chat
+const ChatHotelCard = ({ hotel, onSelect }) => (
+    <div className="bg-white border border-[#E8E4DC] rounded-xl p-3 shadow-sm w-full">
+        <div className="flex items-start gap-3">
+            <img src={hotel.image} alt={hotel.name} className="w-14 h-14 rounded-lg object-cover flex-shrink-0" />
+            <div className="flex-1 min-w-0">
+                <div className="font-bold text-[#1C1916] text-xs truncate">{hotel.name}</div>
+                <div className="flex items-center gap-1 mt-0.5">
+                    <Star size={10} className="text-amber-500 fill-amber-500" />
+                    <span className="text-[10px] text-[#9C9690]">{hotel.rating}</span>
+                    <span className="text-[10px] text-[#9C9690] ml-1">{hotel.distance}</span>
+                </div>
+                <div className="flex items-center justify-between mt-1.5">
+                    <span className="text-xs font-bold text-[#1C1916]">{hotel.price}</span>
+                    <button
+                        onClick={() => onSelect(hotel)}
+                        className="px-2 py-1 bg-[#1C1916] text-[#FDFCFA] text-[9px] uppercase tracking-wider font-bold rounded-lg hover:bg-[#2E3C3A] transition-colors"
+                    >
+                        Select
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+);
+
+// Inline Flight Card for chat
+const ChatFlightCard = ({ flight, symbol, onSelect }) => {
+    const itinerary = flight.itineraries?.[0];
+    const firstSeg = itinerary?.segments?.[0];
+    const lastSeg = itinerary?.segments?.[itinerary.segments.length - 1];
+    const airline = flight.validatingAirlineCodes?.[0] || 'Airline';
+    const price = flight.price?.total || '—';
+    const stops = (itinerary?.segments?.length || 1) - 1;
+
     return (
-        <div className="bg-white border border-[#E8E4DC] rounded-xl p-3 shadow-sm mt-1 w-full max-w-[260px]">
+        <div className="bg-white border border-[#E8E4DC] rounded-xl p-3 shadow-sm w-full">
             <div className="flex justify-between items-start mb-2">
                 <div className="flex items-center gap-2">
                     <div className="w-6 h-6 rounded bg-[#F4F1EB] flex items-center justify-center">
                         <Plane size={12} className="text-[#B89A6A]" />
                     </div>
-                    <span className="text-xs font-bold text-[#1C1916]">{data.airline || 'Airline'}</span>
+                    <span className="text-xs font-bold text-[#1C1916]">{airline}</span>
                 </div>
-                <span className="text-xs font-bold text-[#1C1916]">${data.price}</span>
+                <span className="text-xs font-bold text-[#1C1916]">{symbol}{price}</span>
             </div>
-            
-            <div className="flex items-center justify-between text-[10px] text-[#5A554A] mb-3 px-1">
+            <div className="flex items-center justify-between text-[10px] text-[#5A554A] mb-2 px-1">
                 <div className="text-center">
-                    <div className="font-bold text-[#1C1916] text-xs">{data.departureTime || '10:00'}</div>
-                    <div>{data.origin || 'ORIGIN'}</div>
+                    <div className="font-bold text-[#1C1916] text-xs">{firstSeg?.departure?.at?.split('T')[1]?.slice(0,5) || '—'}</div>
+                    <div>{firstSeg?.departure?.iataCode || '—'}</div>
                 </div>
                 <div className="flex-1 flex flex-col items-center px-2">
-                    <span className="text-[9px] text-[#9C9690] mb-0.5">{data.duration || '2h 30m'}</span>
+                    <span className="text-[9px] text-[#9C9690] mb-0.5">{itinerary?.duration?.replace('PT','').toLowerCase() || '—'}</span>
                     <div className="w-full h-px bg-[#E8E4DC] relative">
                         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full bg-[#B89A6A]"></div>
                     </div>
-                    <span className="text-[9px] text-[#B89A6A] mt-0.5">{data.stops === 0 ? 'Direct' : `${data.stops} Stop`}</span>
+                    <span className="text-[9px] text-[#B89A6A] mt-0.5">{stops === 0 ? 'Direct' : `${stops} Stop`}</span>
                 </div>
                 <div className="text-center">
-                    <div className="font-bold text-[#1C1916] text-xs">{data.arrivalTime || '12:30'}</div>
-                    <div>{data.destination || 'DEST'}</div>
+                    <div className="font-bold text-[#1C1916] text-xs">{lastSeg?.arrival?.at?.split('T')[1]?.slice(0,5) || '—'}</div>
+                    <div>{lastSeg?.arrival?.iataCode || '—'}</div>
                 </div>
             </div>
-            
-            <button className="w-full py-1.5 bg-[#1C1916] text-[#FDFCFA] text-[10px] uppercase tracking-wider font-bold rounded-lg hover:bg-[#2E3C3A] transition-colors">
+            <button
+                onClick={() => onSelect(flight)}
+                className="w-full py-1.5 bg-[#1C1916] text-[#FDFCFA] text-[10px] uppercase tracking-wider font-bold rounded-lg hover:bg-[#2E3C3A] transition-colors"
+            >
                 Select Flight
             </button>
         </div>
     );
 };
 
-const ChatBot = ({ destination, aiItinerary, setAiItinerary }) => {
+const ChatBot = ({ destination, aiItinerary, setAiItinerary, hotels = [], transport, journeySymbol = '₹', onSelectHotel, onSelectFlight }) => {
     const [isOpen, setIsOpen] = useState(false);
     const [messages, setMessages] = useState([{
         role: 'assistant',
-        text: `Hi! I'm your **Travex AI Concierge** 🌍\n\nI can:\n- Answer questions about **${destination || 'your destination'}**\n- Edit your **itinerary** on demand\n\nJust tell me what to change!`,
+        text: `Hi! I'm your **Travex AI Concierge** 🌍\n\nI can:\n- Answer questions about **${destination || 'your destination'}**\n- Show **hotels** or **flights** (e.g. "hotels under 5000")\n- Edit your **itinerary** on demand\n\nJust tell me what you need!`,
         type: 'greeting'
     }]);
     const [input, setInput] = useState('');
@@ -104,6 +137,43 @@ const ChatBot = ({ destination, aiItinerary, setAiItinerary }) => {
 
     const handleOpen = () => { setIsOpen(true); setUnread(0); };
 
+    // Parse price from string like "₹5000/night" or "$120/night"
+    const parsePrice = (priceStr) => {
+        if (!priceStr) return 0;
+        const num = priceStr.replace(/[^0-9.]/g, '');
+        return parseFloat(num) || 0;
+    };
+
+    // Detect hotel query and extract budget
+    const detectHotelQuery = (prompt) => {
+        const lower = prompt.toLowerCase();
+        const hotelKeywords = ['hotel', 'stay', 'accommodation', 'lodge', 'room'];
+        if (!hotelKeywords.some(k => lower.includes(k))) return null;
+
+        // Extract price threshold: "under 5000", "below 3000", "less than 8000", "cheaper than 10000"
+        const priceMatch = lower.match(/(?:under|below|less\s+than|cheaper\s+than|within|max|budget)\s*(?:₹|\$|€|rs\.?|inr|usd)?\s*(\d+)/i);
+        const maxPrice = priceMatch ? parseInt(priceMatch[1]) : null;
+
+        // Also detect "cheapest" or "affordable"
+        const wantsCheap = /cheap|afford|budget|low.?cost|bargain/i.test(lower);
+
+        return { maxPrice, wantsCheap };
+    };
+
+    // Detect flight query
+    const detectFlightQuery = (prompt) => {
+        const lower = prompt.toLowerCase();
+        const flightKeywords = ['flight', 'fly', 'airline', 'plane', 'cheapest flight', 'direct flight'];
+        if (!flightKeywords.some(k => lower.includes(k))) return null;
+
+        const priceMatch = lower.match(/(?:under|below|less\s+than|cheaper\s+than|within|max)\s*(?:₹|\$|€|rs\.?|inr|usd)?\s*(\d+)/i);
+        const maxPrice = priceMatch ? parseInt(priceMatch[1]) : null;
+        const wantsCheap = /cheap|afford|budget|low.?cost|bargain/i.test(lower);
+        const wantsDirect = /direct|non.?stop|nonstop/i.test(lower);
+
+        return { maxPrice, wantsCheap, wantsDirect };
+    };
+
     const handleSend = async (overridePrompt) => {
         const userPrompt = overridePrompt || input.trim();
         if (!userPrompt) return;
@@ -112,7 +182,81 @@ const ChatBot = ({ destination, aiItinerary, setAiItinerary }) => {
         setInput('');
         setLoading(true);
 
-        // Detect edit intent — if itinerary exists AND prompt sounds like a modification
+        // 1. Check for hotel query
+        const hotelQuery = detectHotelQuery(userPrompt);
+        if (hotelQuery && hotels.length > 0) {
+            let filtered = [...hotels];
+
+            if (hotelQuery.maxPrice) {
+                filtered = filtered.filter(h => parsePrice(h.price) <= hotelQuery.maxPrice);
+            }
+            if (hotelQuery.wantsCheap) {
+                filtered.sort((a, b) => parsePrice(a.price) - parsePrice(b.price));
+            }
+
+            const results = filtered.slice(0, 4);
+
+            if (results.length > 0) {
+                setMessages(prev => [...prev, {
+                    role: 'assistant',
+                    text: hotelQuery.maxPrice
+                        ? `Here are **${results.length} hotels** under ${journeySymbol}${hotelQuery.maxPrice}:`
+                        : `Here are the **best hotel options** for your trip:`,
+                    type: 'hotel_suggestions',
+                    hotelData: results
+                }]);
+            } else {
+                setMessages(prev => [...prev, {
+                    role: 'assistant',
+                    text: hotelQuery.maxPrice
+                        ? `No hotels found under ${journeySymbol}${hotelQuery.maxPrice}. Try a higher budget or check the hotels section above.`
+                        : `I couldn't find matching hotels. Check the hotels section above for all options.`
+                }]);
+            }
+            setLoading(false);
+            return;
+        }
+
+        // 2. Check for flight query
+        const flightQuery = detectFlightQuery(userPrompt);
+        const flightResults = transport?.results || [];
+        if (flightQuery && flightResults.length > 0) {
+            let filtered = [...flightResults];
+
+            if (flightQuery.maxPrice) {
+                filtered = filtered.filter(f => parseFloat(f.price?.total || 0) <= flightQuery.maxPrice);
+            }
+            if (flightQuery.wantsDirect) {
+                filtered = filtered.filter(f => (f.itineraries?.[0]?.segments?.length || 1) === 1);
+            }
+            if (flightQuery.wantsCheap) {
+                filtered.sort((a, b) => parseFloat(a.price?.total || 0) - parseFloat(b.price?.total || 0));
+            }
+
+            const results = filtered.slice(0, 3);
+
+            if (results.length > 0) {
+                setMessages(prev => [...prev, {
+                    role: 'assistant',
+                    text: flightQuery.maxPrice
+                        ? `Found **${results.length} flights** under ${journeySymbol}${flightQuery.maxPrice}:`
+                        : flightQuery.wantsDirect
+                            ? `Here are the **direct flights** available:`
+                            : `Here are the **best flight options**:`,
+                    type: 'flight_suggestions',
+                    flightData: results
+                }]);
+            } else {
+                setMessages(prev => [...prev, {
+                    role: 'assistant',
+                    text: `No flights match that criteria. Check the flights section above for all options.`
+                }]);
+            }
+            setLoading(false);
+            return;
+        }
+
+        // 3. Detect edit intent — if itinerary exists AND prompt sounds like a modification
         const editKeywords = ['change', 'swap', 'remove', 'replace', 'add', 'update', 'delete', 'move', 'shift', 'reduce', 'make', 'optimize', 'fewer', 'more', 'day'];
         const isEditRequest = aiItinerary && editKeywords.some(kw => userPrompt.toLowerCase().includes(kw));
 
@@ -122,7 +266,6 @@ const ChatBot = ({ destination, aiItinerary, setAiItinerary }) => {
                 const data = await modifyItinerary(userPrompt, aiItinerary);
                 if (data?.updatedItinerary) {
                     setAiItinerary(data.updatedItinerary);
-                    // Remove the "applying" message and add real response
                     setMessages(prev => [
                         ...prev.filter(m => m.text !== '✦ Applying your changes...'),
                         { role: 'assistant', text: data.message || `**Itinerary updated!** ✓\n\nYour plan has been adjusted based on your request. Scroll up to see the changes in the timeline.`, type: 'success' }
@@ -134,6 +277,7 @@ const ChatBot = ({ destination, aiItinerary, setAiItinerary }) => {
                     ]);
                 }
             } else {
+                // 4. General AI chat
                 const data = await chatWithAI(`Context: Planning trip to ${destination}. Question: ${userPrompt}`);
                 setMessages(prev => [...prev, { role: 'assistant', text: data?.reply || "I'm having trouble connecting. Try again shortly." }]);
             }
@@ -223,11 +367,26 @@ const ChatBot = ({ destination, aiItinerary, setAiItinerary }) => {
                                                     : 'bg-[#F4F1EB] border border-[#E8E4DC] text-[#1C1916] rounded-tl-sm'
                                         }`}
                                     >
-                                        {m.type === 'flight_component' && m.data 
-                                            ? <FlightComponent data={m.data} />
-                                            : m.role === 'assistant' 
-                                                ? <FormattedMessage text={m.text} /> 
-                                                : m.text}
+                                        {m.role === 'assistant' && <FormattedMessage text={m.text} />}
+                                        {m.role === 'user' && m.text}
+
+                                        {/* Inline Hotel Cards */}
+                                        {m.type === 'hotel_suggestions' && m.hotelData && (
+                                            <div className="mt-2 space-y-2">
+                                                {m.hotelData.map((h, j) => (
+                                                    <ChatHotelCard key={j} hotel={h} onSelect={onSelectHotel} />
+                                                ))}
+                                            </div>
+                                        )}
+
+                                        {/* Inline Flight Cards */}
+                                        {m.type === 'flight_suggestions' && m.flightData && (
+                                            <div className="mt-2 space-y-2">
+                                                {m.flightData.map((f, j) => (
+                                                    <ChatFlightCard key={j} flight={f} symbol={journeySymbol} onSelect={onSelectFlight} />
+                                                ))}
+                                            </div>
+                                        )}
                                     </div>
                                 </motion.div>
                             ))}

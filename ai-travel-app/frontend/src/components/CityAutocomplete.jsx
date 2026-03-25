@@ -51,7 +51,7 @@ const CityAutocomplete = ({ placeholder, onSelect, className }) => {
 
   const handleSelect = (item) => {
     // If we have an API match, use it. Otherwise, use raw text.
-    const selection = item || { name: query, iataCode: query, isCustom: true };
+    const selection = item || { name: query, code: query, iataCode: query, isCustom: true };
 
     setQuery(selection.name);
     if (onSelect) onSelect(selection);
@@ -89,9 +89,9 @@ const CityAutocomplete = ({ placeholder, onSelect, className }) => {
               <div>
                 <div className="font-bold text-white text-lg">{bestMatch.name}</div>
                 <div className="text-xs text-slate-400 group-hover:text-blue-200 flex items-center gap-2">
-                  {bestMatch.address?.countryName}
+                  {bestMatch.country}
                   <span className="bg-white/10 px-1.5 py-0.5 rounded text-white font-mono font-bold tracking-wider">
-                    {bestMatch.iataCode}
+                    {bestMatch.code}
                   </span>
                 </div>
               </div>

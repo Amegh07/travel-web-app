@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Clock, Navigation, Info, Utensils, Share, Printer, Plus, Edit2, Camera, LifeBuoy, X, Loader2, Sparkles } from 'lucide-react';
+import { ArrowLeft, Clock, Navigation, Info, Utensils, Share, Printer, Plus, Edit2, Camera, LifeBuoy, X, Loader2, Sparkles, Ticket } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { chatWithAI } from '../services/api';
 
@@ -410,26 +410,44 @@ const DayDetailPage = () => {
                             <div className="sticky top-32 space-y-6">
                                 {/* INTERACTIVE MAP — full day route */}
                                 {(() => {
-                                    // Build stop list: hotel as origin, all activities as stops
                                     const cache = (() => { try { return JSON.parse(localStorage.getItem('travex_results_cache') || '{}'); } catch { return {}; } })();
                                     const hotelName = cache.confirmedHotel?.name || '';
-                                    const stops = data.items
+
+                                    // ✅ FIX: Use real lat/lng coordinates for each stop
+                                    const stopsWithCoords = data.items
                                         .filter(it => !it.title.toLowerCase().includes('transit') && !it.title.toLowerCase().includes('check-in'))
-                                        .map(it => {
-                                            const g = it.location?.geo;
-                                            return g ? `${g.lat},${g.lng}` : encodeURIComponent(it.title);
-                                        });
+                                        .map(it => ({
+                                            label: it.title,
+                                            query: (it.location?.geo?.lat && it.location?.geo?.lng)
+                                                ? `${it.location.geo.lat},${it.location.geo.lng}`
+                                                : encodeURIComponent(it.title)
+                                        }));
 
-                                    // Google Maps dir URL: /maps/dir/origin/stop1/stop2/...
-                                    const origin = hotelName ? encodeURIComponent(hotelName) : stops[0] || '';
-                                    const destinations = stops.slice(hotelName ? 0 : 1).join('/');
-                                    const routeUrl = `https://www.google.com/maps/dir/${origin}/${destinations}`;
+                                    if (stopsWithCoords.length === 0) return null;
 
-                                    // Embed URL — shows the route preview without API key
-                                    const embedOrigin = hotelName ? encodeURIComponent(hotelName) : (data.items[0]?.location?.name || '');
-                                    const embedDest = encodeURIComponent(data.items[data.items.length - 1]?.title || '');
-                                    const waypointNames = data.items.slice(1, -1).map(it => encodeURIComponent(it.title)).join('|');
-                                    const embedSrc = `https://maps.google.com/maps?saddr=${embedOrigin}&daddr=${embedDest}&waypoints=${waypointNames}&hl=en&output=embed`;
+                                    // ✅ Build Google Maps directions URL with real coordinates
+                                    const origin = hotelName
+                                        ? encodeURIComponent(hotelName)
+                                        : stopsWithCoords[0]?.query || '';
+
+                                    const routeStops = hotelName
+                                        ? stopsWithCoords
+                                        : stopsWithCoords.slice(1);
+
+                                    const routeUrl = `https://www.google.com/maps/dir/${origin}/${routeStops.map(s => s.query).join('/')}`;
+
+                                    // ✅ FIX: Use coordinates directly in the embed
+                                    const firstStop = stopsWithCoords[0];
+                                    const lastStop = stopsWithCoords[stopsWithCoords.length - 1];
+                                    const midStops = stopsWithCoords.slice(1, -1);
+
+                                    const embedOrigin = hotelName
+                                        ? encodeURIComponent(hotelName)
+                                        : firstStop?.query || '';
+                                    const embedDest = lastStop?.query || '';
+                                    const waypointStr = midStops.map(s => s.query).join('|');
+
+                                    const embedSrc = `https://maps.google.com/maps?saddr=${embedOrigin}&daddr=${embedDest}${waypointStr ? `&waypoints=${waypointStr}` : ''}&hl=en&output=embed`;
 
                                     return (
                                         <div className="mb-6">
@@ -444,20 +462,35 @@ const DayDetailPage = () => {
                                                     src={embedSrc}
                                                 />
                                             </div>
-                                            {/* Route stop summary */}
+
+                                            {/* Route stop summary with coordinate indicator */}
                                             <div className="mt-3 space-y-1.5">
-                                                {data.items.filter(it => !it.title.toLowerCase().includes('transit')).map((it, si) => (
-                                                    <div key={si} className="flex items-center gap-2 text-xs">
-                                                        <div className="w-5 h-5 rounded-full bg-[#1C1916] text-[#B89A6A] flex items-center justify-center text-[9px] font-bold flex-shrink-0">
-                                                            {si + 1}
+                                                {stopsWithCoords.map((stop, si) => {
+                                                    const hasCoords = stop.query.match(/^-?\d+\.\d+,-?\d+\.\d+$/);
+                                                    return (
+                                                        <div key={si} className="flex items-center gap-2 text-xs">
+                                                            <div className="w-5 h-5 rounded-full bg-[#1C1916] text-[#B89A6A] flex items-center justify-center text-[9px] font-bold flex-shrink-0">
+                                                                {si + 1}
+                                                            </div>
+                                                            <span className="text-[#1C1916] font-medium truncate">{stop.label}</span>
+                                                            {/* ✅ Green dot = exact coordinates, orange = name search */}
+                                                            <span
+                                                                title={hasCoords ? 'Exact GPS location' : 'Location searched by name'}
+                                                                className={`flex-shrink-0 w-1.5 h-1.5 rounded-full ${hasCoords ? 'bg-emerald-400' : 'bg-amber-400'}`}
+                                                            />
+                                                            {si < stopsWithCoords.length - 1 && (
+                                                                <span className="text-[#9C9690] text-[9px] ml-auto flex-shrink-0">→ next</span>
+                                                            )}
                                                         </div>
-                                                        <span className="text-[#1C1916] font-medium truncate">{it.title}</span>
-                                                        {si < data.items.filter(i => !i.title.toLowerCase().includes('transit')).length - 1 && (
-                                                            <span className="text-[#9C9690] text-[9px] ml-auto flex-shrink-0">→ next</span>
-                                                        )}
-                                                    </div>
-                                                ))}
+                                                    );
+                                                })}
+                                                <p className="text-[9px] text-[#9C9690] mt-1 flex items-center gap-2">
+                                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block" /> Exact GPS &nbsp;
+                                                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block" /> Name search
+                                                </p>
                                             </div>
+
+                                            {/* ✅ Opens full day route in Google Maps */}
                                             <button
                                                 onClick={() => window.open(routeUrl, '_blank')}
                                                 className="mt-3 w-full py-2.5 bg-[#1C1916] hover:bg-[#2E3C3A] text-[#FDFCFA] rounded-2xl text-[10px] font-bold uppercase tracking-widest flex items-center justify-center gap-2 transition-colors"
