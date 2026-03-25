@@ -16,13 +16,26 @@ if (!TICKETMASTER_KEY) {
 
 // --- MIDDLEWARE ---
 app.use(cors({ origin: '*' }));
-app.use(express.json());
+app.use(express.json({ limit: '500kb' }));
 
 // 📝 DEBUGGER
 app.use((req, res, next) => {
     console.log(`\n📥 [${req.method}] ${req.url}`);
     next();
 });
+
+// --- 🛠️ HELPER: SAFE JSON PARSE ---
+function extractJSON(raw) {
+    if (!raw) return null;
+    const cleaned = raw.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+    const match = cleaned.match(/[\{\[][\s\S]*[\}\]]/);
+    if (!match) throw new Error("No JSON block found strictly matching { or [.");
+    try {
+        return JSON.parse(match[0]);
+    } catch (err) {
+        throw new Error("Invalid JSON structure: " + err.message);
+    }
+}
 
 // ==================================================
 // 🪄 MAGIC SEARCH: ZERO-SHOT NLP EXTRACTION
@@ -72,7 +85,7 @@ OUTPUT FORMAT (strict JSON, nothing else):
             `User Input: "${query}"`
         );
 
-        const extractedData = JSON.parse(result);
+        const extractedData = extractJSON(result);
         console.log("✅ Extracted Entities:", extractedData);
         res.json(extractedData);
 
@@ -278,13 +291,12 @@ app.get('/api/hotels', async (req, res) => {
         // Add slight pseudo-random variation based on hotel ID so they don't all cost exactly the same
         const randomizePrice = (base, idString) => {
             const hash = Array.from(idString).reduce((acc, char) => acc + char.charCodeAt(0), 0);
-            const variation = (hash % 40) - 20; // +/- 20%
-            return Math.floor(base * (1 + (variation / 100)));
+            const variation = ((hash % 40) - 20) / 100; // Gives -0.20 to +0.20
+            return Math.floor(base * (1 + variation));
         };
 
         // Build final hotel list candidates
         const topCandidates = topHotels
-            .filter(h => Object.keys(offersMap).length === 0 || offersMap[h.hotelId] !== undefined)
             .sort((a, b) => (offersMap[a.hotelId] || 9999) - (offersMap[b.hotelId] || 9999))
             .slice(0, 6);
 
@@ -294,14 +306,14 @@ app.get('/api/hotels', async (req, res) => {
 
         if (hotelsNeedingEstimates.length > 0) {
             console.log(`   🤖 Asking AI to estimate nightly prices for ${hotelsNeedingEstimates.length} hotels in ${targetCity}...`);
-            const hotelNames = hotelsNeedingEstimates.map(h => h.name).join(", ");
+            const sanitize = (str) => str.replace(/[^\w\s,\-']/g, '').slice(0, 100);
+            const hotelNames = hotelsNeedingEstimates.map(h => sanitize(h.name)).join(", ");
             const prompt = `You are an elite travel pricing expert. Estimate the realistic nightly cost (in ${currency}) for a standard room at these specific hotels in ${targetCity}: ${hotelNames}.
             Return strictly a JSON object mapping the exact hotel name to the estimated nightly price as a Number. Example: { "The Plaza": 450, "Hilton": 200 }`;
 
             try {
                 const aiResponse = await runAgent(AgentRole.GUIDE, prompt, `Determine realistic market rates for ${targetCity}.`);
-                const cleanJson = aiResponse.replace(/<think>[\s\S]*?<\/think>/g, '').replace(/```json/gi, '').replace(/```/g, '').trim();
-                const parsedPrices = JSON.parse(cleanJson);
+                const parsedPrices = extractJSON(aiResponse);
 
                 hotelsNeedingEstimates.forEach(h => {
                     if (parsedPrices[h.name]) {
@@ -347,9 +359,12 @@ app.get('/api/hotels', async (req, res) => {
 app.post('/api/itinerary', async (req, res) => {
     try {
         const { destination, dates, hotel, budget, interests, vibeLevel, tripPurpose } = req.body;
-        const start = new Date(dates.arrival);
-        const end = new Date(dates.departure);
-        const daysCount = Math.ceil(Math.abs(end - start) / (1000 * 60 * 60 * 24)) + 1;
+        const start = new Date(dates?.arrival);
+        const end = new Date(dates?.departure);
+        if (isNaN(start) || isNaN(end)) {
+            return res.status(400).json({ error: 'Invalid dates provided in request' });
+        }
+        const daysCount = Math.max(1, Math.ceil(Math.abs(end - start) / (1000 * 60 * 60 * 24)) + 1);
 
         // 💰 1. CFO ENGINE EXTRACTION (Defaulting to INR)
         const dailyAllowance = budget?.dailyAllowance || 0;
@@ -494,15 +509,23 @@ Follow this level of specificity, professional tone, and format exactly for ${de
 
         // 🔥 ENABLE PROGRESSIVE STREAMING (SSE)
         res.setHeader('Content-Type', 'text/event-stream');
-        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Cache-Control', 'no-cache, no-transform');
         res.setHeader('Connection', 'keep-alive');
+        res.setHeader('X-Accel-Buffering', 'no');
+        res.flushHeaders(); // FORCE headers immediately so browser keeps connection alive
+
+        const controller = new AbortController();
+        req.on('close', () => {
+            console.log("   ⚠️ Client disconnected mid-stream. Aborting LLM.");
+            controller.abort();
+        });
 
         // We skip the inspector agent here to guarantee a fast TTFB (Time to First Byte).
         // The Architect instructions are robust enough.
         console.log(`   🌊 Streaming Architect's plan to client...`);
 
         try {
-            const stream = runAgentStream(AgentRole.ARCHITECT, systemPrompt, userContent);
+            const stream = runAgentStream(AgentRole.ARCHITECT, systemPrompt, userContent, controller.signal);
 
             for await (const chunk of stream) {
                 // Send standard SSE format
@@ -548,7 +571,7 @@ app.post('/api/events', async (req, res) => {
 { "events": [{ "id": "1", "title": "Event Name", "category": "Music", "description": "Description", "price": "Free", "date": "2026-04-01" }] }. Return ONLY valid JSON.`,
             `Find 3 generic cultural activities in ${destination} for ${date}.`
         );
-        const parsed = JSON.parse(result);
+        const parsed = extractJSON(result);
         // Handle both array and object responses
         const events = Array.isArray(parsed) ? parsed : (parsed.events || parsed.activities || []);
         res.json(events);
@@ -728,7 +751,7 @@ app.post('/api/search-all', async (req, res) => {
                     `You are a local guide. Return a JSON object: { "events": [{ "id": "1", "title": "Event Name", "category": "Music", "description": "Description", "price": "Free", "date": "2026-04-01" }] }. Return ONLY valid JSON.`,
                     `Find 4 interesting cultural activities or events in ${destName} around ${checkIn}.`
                 );
-                const parsed = JSON.parse(result);
+                const parsed = extractJSON(result);
                 return Array.isArray(parsed) ? parsed : (parsed.events || parsed.activities || []);
             })()
         ]);
@@ -781,14 +804,7 @@ ${JSON.stringify(currentItinerary, null, 2)}`;
 
         const result = await runAgent(AgentRole.ARCHITECT, systemPrompt, userContent);
 
-        // Strip any think tags or markdown fences the model might add
-        const cleaned = result
-            .replace(/<think>[\s\S]*?<\/think>/g, '')
-            .replace(/```json/gi, '')
-            .replace(/```/g, '')
-            .trim();
-
-        const updatedItinerary = JSON.parse(cleaned);
+        const updatedItinerary = extractJSON(result);
 
         console.log(`   ✅ Itinerary modified successfully.`);
 
@@ -835,7 +851,7 @@ Return strictly this JSON format:
 If they ask something else, just return normal JSON: { "reply": "Your helpful text response" }`;
 
         const result = await runAgent(AgentRole.ROUTER, systemPrompt, `User: ${req.body.message}`);
-        res.json(JSON.parse(result));
+        res.json(extractJSON(result));
     } catch { res.json({ reply: "I'm busy." }); }
 });
 

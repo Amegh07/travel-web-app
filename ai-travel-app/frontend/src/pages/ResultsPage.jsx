@@ -1,8 +1,7 @@
 import { useEffect, useState, useMemo, useRef } from 'react';
 import {
     ArrowLeft, Plane, Hotel, Calendar, DollarSign, Loader2, Car,
-    Ticket, MapPin, X, CheckCircle, ExternalLink,
-    Lock, Navigation, Sparkles, Star, ChevronDown, Globe,
+    Ticket, MapPin, X, CheckCircle, ExternalLink, Navigation, Star, ChevronDown, Globe,
     Music, Utensils, Moon, Camera, Heart
 } from 'lucide-react';
 import { searchAll, fetchItineraryStream } from '../services/api';
@@ -14,24 +13,25 @@ import { motion, AnimatePresence } from 'framer-motion';
 const formatDuration = (ptString) => ptString ? ptString.replace("PT", "").toLowerCase() : "";
 const getAirlineLogo = (code) => code ? `https://pics.avs.io/200/200/${code}.png` : '';
 const getAirlineLogoFallback = () => `https://images.unsplash.com/photo-1436491865332-7a61a109cc05?w=100&q=60`;
-// Generate a contextual image for hotels - uses server-assigned image first, then Unsplash
+
 const getHotelImage = (hotel) => {
     if (hotel.image) return hotel.image;
-    // Unsplash source API — searches by hotel name for contextual images
     const query = encodeURIComponent((hotel.name || 'luxury hotel') + ' hotel');
     return `https://source.unsplash.com/800x500/?${query}`;
 };
-// Generate contextual image for events - uses Ticketmaster image first, then picsum
+
 const getEventImage = (event) => {
     if (event.image) return event.image;
     const seed = String(event.id || event.title || 'event').split('').reduce((a, c) => a + c.charCodeAt(0), 0) % 800;
     return `https://picsum.photos/seed/${seed}/800/500`;
 };
+
 const calculateNights = (start, end) => {
     const s = new Date(start);
     const e = new Date(end);
     return Math.max(1, Math.ceil((e - s) / (1000 * 60 * 60 * 24)));
 };
+
 const openDirectionsToAirport = (originName) => {
     if (!originName) return;
     const query = encodeURIComponent(`${originName} Airport`);
@@ -41,15 +41,14 @@ const openDirectionsToAirport = (originName) => {
 // --- COMPONENT: CHECKOUT BAR ---
 const CheckoutBar = ({ flight, hotel, currencySymbol, nights, destName, originName, departDate }) => {
     if (!flight || !hotel) return null;
-    
+
     const flightPrice = parseFloat(flight.price?.total || 0);
-    const hotelPrice = parseFloat(hotel.price.replace(/[^0-9.]/g, '')) * nights;
+    const hotelPrice = parseFloat((hotel?.price || '0').replace(/[^0-9.]/g, '')) * nights;
     const total = flightPrice + hotelPrice;
 
     return (
         <div className="w-full bg-[#1C1916] text-[#FDFCFA] rounded-3xl overflow-hidden shadow-[0_16px_48px_rgba(28,25,22,0.2)] border border-[#B89A6A]/20">
             <div className="p-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
-                {/* Summary */}
                 <div className="flex flex-col md:flex-row items-start md:items-center gap-6 flex-1">
                     <div>
                         <div className="text-[10px] text-[#9C9690] tracking-widest uppercase mb-1">Total Journey + Stay</div>
@@ -64,15 +63,14 @@ const CheckoutBar = ({ flight, hotel, currencySymbol, nights, destName, originNa
                         <div className="text-[#FDFCFA] font-medium">{currencySymbol} {hotelPrice.toFixed(2)}</div>
                     </div>
                 </div>
-                {/* CTA Buttons */}
                 <div className="flex flex-col sm:flex-row items-stretch gap-3 w-full md:w-auto">
-                    <button 
+                    <button
                         onClick={() => window.open(`https://www.google.com/flights?hl=en#flt=${originName}.${destName}.${departDate}`, '_blank')}
                         className="flex-1 md:flex-none border border-[#B89A6A] hover:bg-[#B89A6A]/10 text-[#B89A6A] px-7 py-3.5 rounded-2xl text-xs font-bold uppercase tracking-widest transition-all flex items-center justify-center gap-2 group"
                     >
                         <Plane size={14} className="group-hover:translate-x-0.5 transition-transform" /> Book Flight
                     </button>
-                    <button 
+                    <button
                         onClick={() => window.open(`https://www.google.com/search?q=book+${encodeURIComponent(hotel.name)}`, '_blank')}
                         className="flex-1 md:flex-none bg-[#B89A6A] hover:bg-[#A8876A] text-[#1C1916] px-7 py-3.5 rounded-2xl text-xs font-bold uppercase tracking-widest transition-all flex items-center justify-center gap-2 group shadow-[0_4px_16px_rgba(184,154,106,0.3)]"
                     >
@@ -116,7 +114,7 @@ const FlightCard = ({ flight, isSelected, onSelect, showBook = false }) => {
                                     e.target.src = getAirlineLogoFallback(airlineCode);
                                     e.target.className = 'w-full h-full object-cover';
                                 }}
-                              />
+                            />
                             : <Plane size={20} />
                         }
                     </div>
@@ -190,7 +188,7 @@ const HotelCard = ({ hotel, isSelected, onSelect, nights, showBook = false }) =>
                     : 'border-[#E8E4DC] shadow-[0_1px_4px_rgba(28,25,22,0.05)] hover:border-[#B89A6A]/40 hover:shadow-[0_8px_24px_rgba(28,25,22,0.08)]'}
             `}
         >
-            <div className="relative h-56 overflow-hidden bg-[#2E3C3A]">
+            <div className="relative h-48 w-full shrink-0 overflow-hidden bg-[#2E3C3A]">
                 <img
                     src={getHotelImage(hotel)}
                     className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
@@ -234,15 +232,15 @@ const HotelCard = ({ hotel, isSelected, onSelect, nights, showBook = false }) =>
                     </button>
                 </div>
 
-                <div className="mt-auto border-t border-[#E8E4DC] pt-4 flex justify-between items-end">
+                <div className="mt-auto border-t border-[#E8E4DC] pt-4 flex flex-wrap justify-between items-center gap-3">
                     <div>
                         <div className="text-[10px] text-[#9C9690] tracking-widest uppercase mb-1">{nights} Nights · {currencySymbol} {rawPrice.toFixed(2)}/night</div>
-                        <div className="serif-text text-2xl font-light text-[#1C1916]">{currencySymbol} {totalPrice.toFixed(2)} <span className="text-[10px] text-[#9C9690] font-normal tracking-widest uppercase">Total</span></div>
+                        <div className="serif-text text-2xl font-light text-[#1C1916] leading-none">{currencySymbol} {totalPrice.toFixed(2)} <span className="text-[10px] text-[#9C9690] font-normal tracking-widest uppercase">Total</span></div>
                     </div>
                     {showBook && (
                         <button
                             onClick={(e) => { e.stopPropagation(); window.open(`https://www.google.com/search?q=book+${hotel.name}`, '_blank'); }}
-                            className="text-[10px] bg-[#F4F1EB] hover:bg-[#E8E4DC] border border-[#E8E4DC] text-[#1C1916] font-medium px-4 py-2 rounded-xl transition-all tracking-widest uppercase"
+                            className="text-[10px] whitespace-nowrap bg-[#F4F1EB] hover:bg-[#E8E4DC] border border-[#E8E4DC] text-[#1C1916] font-medium px-4 py-2 rounded-xl transition-all tracking-widest uppercase"
                         >
                             Book Stay
                         </button>
@@ -346,7 +344,6 @@ const HotelModal = ({ isOpen, onClose, hotels, selectedId, onSelect, nights }) =
     return (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-[#1C1916]/80 backdrop-blur-sm animate-fade-in">
             <div className="w-full max-w-5xl bg-[#FDFCFA] border border-[#E8E4DC] rounded-[2rem] shadow-[0_16px_48px_rgba(28,25,22,0.1)] overflow-hidden flex flex-col max-h-[90vh]">
-                {/* Header */}
                 <div className="p-6 border-b border-[#E8E4DC] flex justify-between items-center bg-[#F4F1EB]">
                     <div>
                         <h2 className="serif-text text-3xl font-light text-[#1C1916] tracking-tight">Select Stay</h2>
@@ -355,9 +352,7 @@ const HotelModal = ({ isOpen, onClose, hotels, selectedId, onSelect, nights }) =
                     <button onClick={onClose} className="p-2 hover:bg-[#E8E4DC] rounded-full text-[#1C1916] transition-colors"><X size={20} /></button>
                 </div>
 
-                {/* Filter Bar */}
                 <div className="p-4 border-b border-[#E8E4DC] bg-[#FDFCFA] flex flex-wrap gap-3 items-center">
-                    {/* Sort */}
                     <div className="flex items-center gap-1.5">
                         <span className="text-[9px] text-[#9C9690] uppercase tracking-widest font-medium">Sort:</span>
                         {[
@@ -375,7 +370,6 @@ const HotelModal = ({ isOpen, onClose, hotels, selectedId, onSelect, nights }) =
 
                     <div className="w-px h-5 bg-[#E8E4DC]" />
 
-                    {/* Star Rating Filter */}
                     <div className="flex items-center gap-1.5">
                         <span className="text-[9px] text-[#9C9690] uppercase tracking-widest font-medium">Stars:</span>
                         {[
@@ -393,7 +387,6 @@ const HotelModal = ({ isOpen, onClose, hotels, selectedId, onSelect, nights }) =
                     </div>
                 </div>
 
-                {/* Hotel Grid */}
                 <div className="overflow-y-auto p-6 grid grid-cols-1 md:grid-cols-3 gap-6">
                     {filtered.length > 0
                         ? filtered.map((h, i) => <HotelCard key={i} hotel={h} nights={nights} isSelected={selectedId === h.id} onSelect={(ht) => { onSelect(ht); onClose(); }} showBook={true} />)
@@ -432,7 +425,7 @@ const EventModal = ({ isOpen, onClose, events, addedEvents, onToggle }) => {
     );
 };
 
-// --- MINI-MAP BRIDGE (compact strip) ---
+// --- MINI-MAP BRIDGE ---
 const MiniMapBridge = ({ data, loading }) => {
     if (loading) return (
         <div className="flex items-center gap-3 bg-[#FDFCFA] border border-[#E8E4DC] rounded-2xl px-5 py-3.5 animate-pulse">
@@ -468,12 +461,10 @@ const ResultsPage = ({ searchData, onBack }) => {
     const destName = rawDestName.replace(/\b(INTL|INTERNATIONAL|AIRPORT|AIR PORT)\b/gi, "").trim();
     const originName = searchData ? getName(searchData.fromCity) : "Origin";
 
-    // Properly handle one-way vs round trip
-    const tripType    = searchData?.tripType || 'round';
+    const tripType = searchData?.tripType || 'round';
     const isRoundTrip = tripType === 'round' && !!searchData?.returnDate;
 
-    const arrivalDate   = searchData?.departDate;
-    // One-way: no real return date — use +3 days only for hotel/itinerary duration
+    const arrivalDate = searchData?.departDate;
     const departureDate = isRoundTrip
         ? searchData.returnDate
         : (() => {
@@ -485,16 +476,13 @@ const ResultsPage = ({ searchData, onBack }) => {
     const nights = calculateNights(arrivalDate, departureDate);
 
     const journeyCurrency = searchData?.currency || 'INR';
-    const journeySymbol   = journeyCurrency === 'USD' ? '$' : journeyCurrency === 'EUR' ? '€' : journeyCurrency === 'GBP' ? '£' : '₹';
+    const journeySymbol = journeyCurrency === 'USD' ? '$' : journeyCurrency === 'EUR' ? '€' : journeyCurrency === 'GBP' ? '£' : '₹';
 
     // CACHE INITIATION
     const getCache = () => {
-        try { 
+        try {
             const cache = JSON.parse(localStorage.getItem('travex_results_cache')) || {};
-            // If the cached destination doesn't match the current search destination, ignore the cache
-            if (cache.lastSearchDestination && cache.lastSearchDestination !== destName) {
-                return {};
-            }
+            if (cache.lastSearchDestination && cache.lastSearchDestination !== destName) return {};
             return cache;
         }
         catch { return {}; }
@@ -513,7 +501,6 @@ const ResultsPage = ({ searchData, onBack }) => {
     const [loading, setLoading] = useState(() => initialCache.hotels?.length > 0 ? false : true);
     const [heroImage, setHeroImage] = useState(() => initialCache.heroImage || null);
 
-    // MODAL STATES
     const [isFlightModalOpen, setIsFlightModalOpen] = useState(false);
     const [isHotelModalOpen, setIsHotelModalOpen] = useState(false);
     const [isEventModalOpen, setIsEventModalOpen] = useState(false);
@@ -525,10 +512,20 @@ const ResultsPage = ({ searchData, onBack }) => {
     const [miniMapData, setMiniMapData] = useState(() => initialCache.miniMapData || null);
     const [bridgeLoading, setBridgeLoading] = useState(false);
     const [aiItinerary, setAiItinerary] = useState(() => initialCache.aiItinerary || null);
+    const [aiError, setAiError] = useState(null);
     const [plannerLoading, setPlannerLoading] = useState(false);
-    const plannerHasFired = useRef(false);
 
-    // SAVE TO CACHE
+    // Refs for stream control
+    const plannerHasFired = useRef(false);
+    const abortControllerRef = useRef(null);
+    const isStreamingRef = useRef(false);
+
+    useEffect(() => {
+        if (isFlightModalOpen || isHotelModalOpen || isEventModalOpen) document.body.style.overflow = 'hidden';
+        else document.body.style.overflow = 'unset';
+        return () => { document.body.style.overflow = 'unset'; };
+    }, [isFlightModalOpen, isHotelModalOpen, isEventModalOpen]);
+
     useEffect(() => {
         const cacheObj = {
             lastSearchDestination: destName,
@@ -539,47 +536,57 @@ const ResultsPage = ({ searchData, onBack }) => {
         localStorage.setItem('travex_results_cache', JSON.stringify(cacheObj));
     }, [destName, transport, hotels, events, heroImage, confirmedFlight, confirmedHotel, addedEvents, miniMapData, aiItinerary]);
 
-    // SELECTION TOGGLES
-    const toggleFlight = (flight) => { 
-        if (confirmedFlight?.id === flight.id) { 
-            setConfirmedFlight(null); 
-            setAiItinerary(null); 
-            setMiniMapData(null);
-            plannerHasFired.current = false;
-        } else {
-            setConfirmedFlight(flight);
-            setAiItinerary(null);
-            setMiniMapData(null);
-            plannerHasFired.current = false;
-        }
-    };
-    const toggleHotel = (hotel) => { 
-        if (confirmedHotel?.id === hotel.id) { 
-            setConfirmedHotel(null); 
-            setAiItinerary(null); 
-            setMiniMapData(null);
-            plannerHasFired.current = false;
-        } else {
-            setConfirmedHotel(hotel);
-            setAiItinerary(null);
-            setMiniMapData(null);
-            plannerHasFired.current = false;
-        }
-    };
     const [toastMsg, setToastMsg] = useState(null);
     const showToast = (msg) => {
         setToastMsg(msg);
         setTimeout(() => setToastMsg(null), 3000);
     };
 
+    // --- SELECTION TOGGLES ---
+    // Note: We ONLY update state here. The useEffect below will handle firing the AI.
+    const toggleFlight = (flight) => {
+        if (isStreamingRef.current) {
+            abortControllerRef.current?.abort();
+            isStreamingRef.current = false;
+        }
+
+        if (confirmedFlight?.id === flight.id) {
+            setConfirmedFlight(null);
+            setAiItinerary(null);
+            setMiniMapData(null);
+            plannerHasFired.current = false; // Reset lock so it can fire again later
+        } else {
+            setConfirmedFlight(flight);
+            setAiItinerary(null);
+            setMiniMapData(null);
+            plannerHasFired.current = false; // Reset lock to trigger new generation
+        }
+    };
+
+    const toggleHotel = (hotel) => {
+        if (isStreamingRef.current) {
+            abortControllerRef.current?.abort();
+            isStreamingRef.current = false;
+        }
+
+        if (confirmedHotel?.id === hotel.id) {
+            setConfirmedHotel(null);
+            setAiItinerary(null);
+            setMiniMapData(null);
+            plannerHasFired.current = false; // Reset lock
+        } else {
+            setConfirmedHotel(hotel);
+            setAiItinerary(null);
+            setMiniMapData(null);
+            plannerHasFired.current = false; // Reset lock to trigger new generation
+        }
+    };
+
     const toggleEvent = (event) => {
         const isAdded = addedEvents.some(e => e.id === event.id);
 
         if (isAdded) {
-            // REMOVE from addedEvents
             setAddedEvents(prev => prev.filter(e => e.id !== event.id));
-
-            // REMOVE from aiItinerary if it exists
             if (aiItinerary?.daily_plan) {
                 setAiItinerary(prev => ({
                     ...prev,
@@ -591,28 +598,22 @@ const ResultsPage = ({ searchData, onBack }) => {
             }
             showToast(`"${event.title}" removed from your plan.`);
         } else {
-            // ADD to addedEvents
             setAddedEvents(prev => [...prev, event]);
-
-            // INJECT into aiItinerary if it has been generated
             if (aiItinerary?.daily_plan?.length > 0) {
-                // Spread across days: pick the day with the fewest activities
                 const dayPlan = [...aiItinerary.daily_plan];
                 const targetDayIndex = dayPlan.reduce((minIdx, day, i, arr) =>
                     day.activities.length < arr[minIdx].activities.length ? i : minIdx, 0);
 
                 const newActivity = {
-                    _eventId: event.id,            // internal marker so we can remove it
+                    _eventId: event.id,
                     time: event.date ? "Evening" : "19:00",
                     activity: event.title,
                     type: "sightseeing",
-                    description: event.description || `${event.category} event at ${event.date || "your destination"}.`,
+                    description: event.description || `${event.category} event.`,
                     cost_estimate: parseFloat((event.price || "0").replace(/[^0-9.]/g, '')) || 0,
                     booking_url: event.url || null,
                     transit_instruction: "Check your event ticket for venue directions.",
                     localness_signal: 0.7,
-                    latitude: null,
-                    longitude: null,
                 };
 
                 const updatedPlan = dayPlan.map((day, i) =>
@@ -628,11 +629,18 @@ const ResultsPage = ({ searchData, onBack }) => {
         }
     };
 
+    const lastSearchCity = useRef(searchData?.toCity || null);
 
     // --- 1. INITIAL DATA FETCH ---
     useEffect(() => {
         if (!searchData) return;
-        if (hotels.length > 0) {
+
+        if (lastSearchCity.current !== searchData.toCity) {
+            setHotels([]);
+            setTransport({ type: 'none', results: [] });
+            setEvents([]);
+            lastSearchCity.current = searchData.toCity;
+        } else if (hotels.length > 0) {
             setLoading(false);
             return;
         }
@@ -641,113 +649,153 @@ const ResultsPage = ({ searchData, onBack }) => {
             setLoading(true);
             try {
                 const results = await searchAll(searchData);
-                
                 if (results.heroImage) setHeroImage(results.heroImage);
                 setTransport(results.transportData || { type: 'none', results: [] });
                 setHotels(results.hotelData || []);
                 const rawEvents = results.eventData || [];
                 setEvents(Array.isArray(rawEvents) ? rawEvents : (rawEvents.events || rawEvents.activities || []));
-            } catch (err) { 
-                console.error("Aggregation Fetch Error:", err); 
-            } finally { 
-                setLoading(false); 
+            } catch (err) {
+                console.error("Aggregation Fetch Error:", err);
+            } finally {
+                setLoading(false);
             }
         };
         loadData();
     }, [searchData, hotels.length]);
 
-    // --- 2. AI UNLOCK LOGIC (ref-guarded to prevent infinite loop) ---
+
+    // --- 2. AI UNLOCK LOGIC (THE CORRECTED, BULLETPROOF EFFECT) ---
     useEffect(() => {
-        if (confirmedFlight && confirmedHotel && !aiItinerary && !plannerLoading && !plannerHasFired.current) {
-            plannerHasFired.current = true; // 🔒 Lock immediately — prevents re-entry
-            setPlannerLoading(true);
-            setBridgeLoading(true);
+        // Guard clause: Only run if both are selected and we haven't already fired
+        if (!confirmedFlight || !confirmedHotel || plannerHasFired.current) {
+            return;
+        }
 
-            const buildPlan = async () => {
-                try {
-                    const totalBudget  = parseFloat(searchData?.budget || 2000);
-                    const flightCost   = parseFloat(confirmedFlight?.price?.total || 0);
-                    const hotelCost    = parseFloat(confirmedHotel?.price?.replace(/[^0-9.]/g, '') || 0) * nights;
-                    const remaining    = Math.max(500, totalBudget - flightCost - hotelCost);
-                    const dailyAllow   = Math.floor(remaining / Math.max(1, nights));
+        console.log("🚀 AI Planner Triggered! Flight and Hotel are locked in.");
+        plannerHasFired.current = true; // 🔒 Lock immediately to prevent double-firing
+        setPlannerLoading(true);
+        setBridgeLoading(true);
+        setAiError(null);
 
-                    const payload = {
-                        destination: destName,
-                        dates: { arrival: arrivalDate, departure: departureDate },
-                        hotel:  confirmedHotel,
-                        flight: confirmedFlight,
-                        budget: {
-                            total:          totalBudget,
-                            currency:       journeyCurrency,
-                            remaining:      remaining,
-                            dailyAllowance: dailyAllow
-                        },
-                        interests: searchData?.interests || [],
-                        tripType:  tripType
-                    };
+        const controller = new AbortController();
+        abortControllerRef.current = controller;
+        isStreamingRef.current = true;
 
-                    let accumulatedJson = "";
-                    
-                    const tryParsePartialJSON = (jsonString) => {
-                        try { return JSON.parse(jsonString); } catch (e) {
-                            try {
-                                let cleaned = jsonString.replace(/,\s*$/, '');
-                                const openBraces = (cleaned.match(/\{/g) || []).length - (cleaned.match(/\}/g) || []).length;
-                                const openBrackets = (cleaned.match(/\[/g) || []).length - (cleaned.match(/\]/g) || []).length;
-                                if (cleaned.endsWith('"')) cleaned += '"';
-                                for(let i=0; i<openBrackets; i++) cleaned += ']';
-                                for(let i=0; i<openBraces; i++) cleaned += '}';
-                                return JSON.parse(cleaned);
-                            } catch { return null; }
-                        }
-                    };
+        const buildPlan = async () => {
+            try {
+                const totalBudget = parseFloat(searchData?.budget || 2000);
+                const flightCost = parseFloat(confirmedFlight?.price?.total || 0);
+                const hotelCost = parseFloat(confirmedHotel?.price?.replace(/[^0-9.]/g, '') || 0) * nights;
+                const remaining = Math.max(500, totalBudget - flightCost - hotelCost);
+                const dailyAllow = Math.floor(remaining / Math.max(1, nights));
 
-                    await fetchItineraryStream(payload, (chunk) => {
-                        accumulatedJson += chunk;
-                        const partialPlan = tryParsePartialJSON(accumulatedJson);
-                        if (partialPlan && partialPlan.daily_plan) {
-                            setAiItinerary(partialPlan);
-                        }
-                    });
-                    
-                    // Final guaranteed parse once stream completes
+                const payload = {
+                    destination: destName,
+                    dates: { arrival: arrivalDate, departure: departureDate },
+                    hotel: confirmedHotel,
+                    flight: confirmedFlight,
+                    budget: {
+                        total: totalBudget,
+                        currency: journeyCurrency,
+                        remaining: remaining,
+                        dailyAllowance: dailyAllow
+                    },
+                    interests: searchData?.interests || [],
+                    tripType: tripType
+                };
+
+                let accumulatedJson = "";
+
+                const tryParsePartialJSON = (jsonString) => {
+                    try { return JSON.parse(jsonString); } catch (e) {
+                        try {
+                            let cleaned = jsonString.replace(/,\s*$/, '');
+                            const openBraces = (cleaned.match(/\{/g) || []).length - (cleaned.match(/\}/g) || []).length;
+                            const openBrackets = (cleaned.match(/\[/g) || []).length - (cleaned.match(/\]/g) || []).length;
+                            if (cleaned.endsWith('"')) cleaned += '"';
+                            for (let i = 0; i < openBrackets; i++) cleaned += ']';
+                            for (let i = 0; i < openBraces; i++) cleaned += '}';
+                            return JSON.parse(cleaned);
+                        } catch { return null; }
+                    }
+                };
+
+                // IMPORTANT: Ensure your api.js fetchItineraryStream uses the full backend URL to avoid Vite Proxy timeout!
+                await fetchItineraryStream(payload, (chunk) => {
+                    accumulatedJson += chunk;
+                    const partialPlan = tryParsePartialJSON(accumulatedJson);
+                    if (partialPlan && partialPlan.daily_plan) {
+                        setAiItinerary(partialPlan);
+                    }
+                }, (errorData) => {
+                    setAiError("AI unavailable. Please check your API keys or try again shortly.");
+                }, controller.signal);
+
+                if (accumulatedJson.trim()) {
                     try {
                         const finalPlan = JSON.parse(accumulatedJson);
-                        if (finalPlan && finalPlan.daily_plan) {
-                            setAiItinerary(finalPlan);
-                        }
-                    } catch(e) {
-                        console.error("Final JSON parse failed:", e);
+                        if (finalPlan && finalPlan.daily_plan) setAiItinerary(finalPlan);
+                    } catch (e) {
+                        console.warn("Final JSON parse skipped during fallback protocol.");
                     }
-                } catch (outerErr) {
-                    console.error("buildPlan failed:", outerErr);
-                } finally {
-                    setPlannerLoading(false);
-                    setTimeout(() => {
-                        const airline = confirmedFlight.validatingAirlineCodes?.[0] || 'Airline';
-                        setMiniMapData({
-                            origin: `${airline} Terminal`,
-                            destination: confirmedHotel.name,
-                            distance: "24 km", duration: "35 min", traffic: "Light Traffic",
-                            routeUrl: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(confirmedHotel.name)}`
-                        });
-                        setBridgeLoading(false);
-                    }, 1000);
                 }
-            };
-            buildPlan();
-        }
-    }, [confirmedFlight, confirmedHotel, aiItinerary, plannerLoading, arrivalDate, departureDate, destName, searchData]);
+            } catch (outerErr) {
+                if (outerErr.name === 'AbortError') {
+                    console.log("Stream correctly aborted by React cleanup.");
+                } else {
+                    console.error("buildPlan failed:", outerErr);
+                    setAiError("Connection interrupted. Please try again.");
+                }
+            } finally {
+                isStreamingRef.current = false;
+                setPlannerLoading(false);
+                setTimeout(() => {
+                    const airline = confirmedFlight?.validatingAirlineCodes?.[0] || 'Airline';
+                    setMiniMapData({
+                        origin: `${airline} Terminal`,
+                        destination: confirmedHotel?.name || 'Your Hotel',
+                        distance: "24 km", duration: "35 min", traffic: "Light Traffic",
+                        routeUrl: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(confirmedHotel?.name || '')}`
+                    });
+                    setBridgeLoading(false);
+                }, 1000);
+            }
+        };
+
+        buildPlan();
+
+        // Cleanup: Run if component unmounts or dependencies change mid-stream
+        return () => {
+            if (isStreamingRef.current) {
+                console.log("🛑 Unmounting: Aborting AI Stream...");
+                controller.abort();
+                isStreamingRef.current = false;
+                plannerHasFired.current = false; // Allow trigger on remount
+            }
+        };
+    }, [confirmedFlight, confirmedHotel, arrivalDate, departureDate, destName, searchData, nights, journeyCurrency, tripType]);
+
 
     const bgImage = heroImage || `https://images.unsplash.com/photo-1499856871958-5b9627545d1a?auto=format&fit=crop&w=1600&q=80`;
 
     if (!searchData) return null;
 
+    const sortedFlights = [...(transport.results || [])].sort((a, b) => {
+        if (confirmedFlight?.id === a.id) return -1;
+        if (confirmedFlight?.id === b.id) return 1;
+        return 0;
+    });
+
+    const sortedHotels = [...hotels].sort((a, b) => {
+        if (confirmedHotel?.id === a.id) return -1;
+        if (confirmedHotel?.id === b.id) return 1;
+        return 0;
+    });
+
     return (
         <div className="selection:bg-[#B89A6A]/20 pb-16 font-sans bg-[#F4F1EB] text-[#1C1916] min-h-screen">
             <ChatBot destination={destName} aiItinerary={aiItinerary} setAiItinerary={setAiItinerary} hotels={hotels} transport={transport} journeySymbol={journeySymbol} onSelectHotel={toggleHotel} onSelectFlight={toggleFlight} />
 
-            {/* TOAST NOTIFICATION */}
             <AnimatePresence>
                 {toastMsg && (
                     <motion.div
@@ -763,11 +811,9 @@ const ResultsPage = ({ searchData, onBack }) => {
                 )}
             </AnimatePresence>
 
-            {/* MODALS */}
-            <FlightModal isOpen={isFlightModalOpen} onClose={() => setIsFlightModalOpen(false)} flights={transport.results} selectedId={confirmedFlight?.id} onSelect={toggleFlight} />
-            <HotelModal isOpen={isHotelModalOpen} onClose={() => setIsHotelModalOpen(false)} hotels={hotels} nights={nights} selectedId={confirmedHotel?.id} onSelect={toggleHotel} />
+            <FlightModal isOpen={isFlightModalOpen} onClose={() => setIsFlightModalOpen(false)} flights={sortedFlights} selectedId={confirmedFlight?.id} onSelect={toggleFlight} />
+            <HotelModal isOpen={isHotelModalOpen} onClose={() => setIsHotelModalOpen(false)} hotels={sortedHotels} nights={nights} selectedId={confirmedHotel?.id} onSelect={toggleHotel} />
             <EventModal isOpen={isEventModalOpen} onClose={() => setIsEventModalOpen(false)} events={events} addedEvents={addedEvents} onToggle={toggleEvent} />
-
 
             {loading ? (
                 <div className="h-screen flex flex-col items-center justify-center z-50 fixed inset-0 bg-[#F4F1EB]">
@@ -777,7 +823,7 @@ const ResultsPage = ({ searchData, onBack }) => {
             ) : (
                 <div className="max-w-[1200px] mx-auto p-4 lg:p-8 space-y-8 mt-4 animate-fade-in">
 
-                    {/* 1. HERO */}
+                    {/* HERO */}
                     <div className="relative w-full rounded-3xl overflow-hidden shadow-[0_4px_24px_rgba(28,25,22,0.08)] border border-[#E8E4DC] group bg-[#FDFCFA]">
                         <div className="absolute inset-0 h-[350px]">
                             <img src={bgImage} className="w-full h-full object-cover transition-transform duration-[3s] group-hover:scale-105" alt={destName} />
@@ -807,7 +853,6 @@ const ResultsPage = ({ searchData, onBack }) => {
                                     </div>
                                 </div>
 
-                                {/* Summary Widget */}
                                 <div className="w-full xl:w-[450px] bg-[#FDFCFA]/90 backdrop-blur-xl p-6 rounded-2xl border border-[#E8E4DC] shadow-[0_4px_24px_rgba(28,25,22,0.08)] relative overflow-hidden">
                                     <div className="flex justify-between items-center mb-4">
                                         <div className="flex items-center gap-2 text-[#9C9690] font-medium uppercase tracking-widest text-[10px]">
@@ -845,7 +890,7 @@ const ResultsPage = ({ searchData, onBack }) => {
                         </div>
                     </div>
 
-                    {/* Smart Trip Summary Pill */}
+                    {/* Summary Pill */}
                     <div className="bg-[#FDFCFA] border border-[#E8E4DC] rounded-2xl p-5 flex flex-col md:flex-row items-start md:items-center gap-4 relative overflow-hidden shadow-[0_1px_4px_rgba(28,25,22,0.05)]">
                         <div className="absolute top-0 left-0 w-full h-px bg-gradient-to-r from-[#2E3C3A] via-[#B89A6A] to-[#E8E4DC]"></div>
                         <div className="flex-1">
@@ -859,7 +904,7 @@ const ResultsPage = ({ searchData, onBack }) => {
                         </button>
                     </div>
 
-                    {/* 2. JOURNEY (FLIGHTS) */}
+                    {/* FLIGHTS */}
                     <div className="bg-[#FDFCFA] shadow-[0_1px_4px_rgba(28,25,22,0.05)] border border-[#E8E4DC] rounded-3xl p-8 relative transition-colors">
                         <div className="flex items-center gap-3 mb-8">
                             <div className="p-2.5 bg-[#F4F1EB] rounded-xl border border-[#E8E4DC]"><Plane className="w-5 h-5 text-[#B89A6A]" /></div>
@@ -875,15 +920,15 @@ const ResultsPage = ({ searchData, onBack }) => {
                                 </div>
                             </div>
 
-                            {(transport.results || []).slice(0, 2).map((f, i) => <FlightCard key={i} flight={f} isSelected={confirmedFlight?.id === f.id} onSelect={toggleFlight} />)}
+                            {sortedFlights.slice(0, 2).map((f, i) => <FlightCard key={i} flight={f} isSelected={confirmedFlight?.id === f.id} onSelect={toggleFlight} />)}
 
                             <button onClick={() => setIsFlightModalOpen(true)} className="w-full mt-2 py-4 rounded-xl border border-dashed border-[#E8E4DC] text-[#9C9690] hover:text-[#1C1916] hover:border-[#B89A6A]/50 bg-[#FDFCFA] transition-all text-[10px] tracking-widest uppercase font-medium flex items-center justify-center gap-2">
-                                View all {transport.results?.length || 0} flights <ChevronDown className="w-4 h-4" />
+                                View all {sortedFlights.length} flights <ChevronDown className="w-4 h-4" />
                             </button>
                         </div>
                     </div>
 
-                    {/* 3. STAYS (HOTELS) */}
+                    {/* HOTELS */}
                     <div className="bg-[#FDFCFA] shadow-[0_1px_4px_rgba(28,25,22,0.05)] border border-[#E8E4DC] rounded-3xl p-8">
                         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
                             <div className="flex items-center gap-3">
@@ -893,14 +938,14 @@ const ResultsPage = ({ searchData, onBack }) => {
                         </div>
 
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-                            {hotels.slice(0, 3).map((h, i) => <HotelCard key={i} hotel={h} nights={nights} isSelected={confirmedHotel?.id === h.id} onSelect={toggleHotel} />)}
+                            {sortedHotels.slice(0, 3).map((h, i) => <HotelCard key={i} hotel={h} nights={nights} isSelected={confirmedHotel?.id === h.id} onSelect={toggleHotel} />)}
                         </div>
                         <button onClick={() => setIsHotelModalOpen(true)} className="w-full mt-6 py-4 rounded-xl border border-dashed border-[#E8E4DC] text-[#9C9690] hover:text-[#1C1916] hover:border-[#B89A6A]/50 bg-[#FDFCFA] transition-all text-[10px] tracking-widest uppercase font-medium flex items-center justify-center gap-2">
-                            View all {hotels.length} hotels <ChevronDown className="w-4 h-4" />
+                            View all {sortedHotels.length} hotels <ChevronDown className="w-4 h-4" />
                         </button>
                     </div>
 
-                    {/* 4. LOCAL VIBES (EVENTS) */}
+                    {/* EVENTS */}
                     <div className="bg-[#FDFCFA] shadow-[0_1px_4px_rgba(28,25,22,0.05)] border border-[#E8E4DC] rounded-3xl p-8">
                         <div className="flex items-center gap-3 mb-8">
                             <div className="p-2.5 bg-[#F4F1EB] rounded-xl border border-[#E8E4DC]"><Ticket className="w-5 h-5 text-[#B89A6A]" /></div>
@@ -914,12 +959,12 @@ const ResultsPage = ({ searchData, onBack }) => {
                         </button>
                     </div>
 
-                    {/* 5. LOGISTICS (MAP) */}
+                    {/* MAP LOGISTICS */}
                     <div className="relative">
                         <MiniMapBridge data={miniMapData} loading={bridgeLoading} />
                     </div>
 
-                    {/* 6. AI PLANNER (BOTTOM) */}
+                    {/* AI PLANNER */}
                     <div className="bg-[#FDFCFA] shadow-[0_1px_4px_rgba(28,25,22,0.05)] border border-[#E8E4DC] rounded-3xl p-8 relative min-h-[400px]">
                         {!aiItinerary ? (
                             <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-8">
@@ -927,6 +972,20 @@ const ResultsPage = ({ searchData, onBack }) => {
                                     <div className="flex flex-col items-center gap-4">
                                         <Loader2 className="animate-spin text-[#B89A6A]" size={48} />
                                         <p className="serif-text text-2xl font-light text-[#1C1916] tracking-tight animate-pulse">Personalising your journey...</p>
+                                    </div>
+                                ) : aiError ? (
+                                    <div className="flex flex-col items-center gap-4">
+                                        <div className="w-14 h-14 rounded-full bg-[#F4F1EB] border border-[#E8E4DC] flex items-center justify-center">
+                                            <span className="text-2xl">⚠️</span>
+                                        </div>
+                                        <h3 className="serif-text text-[#1C1916] font-light text-2xl tracking-tight">AI Temporarily Unavailable</h3>
+                                        <p className="text-[#9C9690] text-sm max-w-sm">{aiError}</p>
+                                        <button
+                                            onClick={() => { setAiError(null); plannerHasFired.current = false; setConfirmedHotel({ ...confirmedHotel }); }} // Hack to trigger effect
+                                            className="mt-2 px-6 py-2.5 bg-[#1C1916] text-[#FDFCFA] text-[10px] font-medium tracking-widest uppercase rounded-xl hover:bg-[#2E3C3A] transition-colors"
+                                        >
+                                            Retry
+                                        </button>
                                     </div>
                                 ) : (
                                     <>
@@ -946,8 +1005,7 @@ const ResultsPage = ({ searchData, onBack }) => {
                         )}
                     </div>
 
-
-                    {/* 7. CHECKOUT BAR — inline at the bottom of the page */}
+                    {/* CHECKOUT BAR */}
                     {confirmedFlight && confirmedHotel && (
                         <CheckoutBar
                             flight={confirmedFlight}

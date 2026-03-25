@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { X, Send, Loader2, MessageSquare, Wand2, RotateCcw, Plane, Clock, Hotel, Star } from 'lucide-react';
+import { X, Send, MessageSquare, Wand2, RotateCcw, Plane, Star } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { chatWithAI, modifyItinerary } from '../services/api';
 
@@ -257,7 +257,7 @@ const ChatBot = ({ destination, aiItinerary, setAiItinerary, hotels = [], transp
         }
 
         // 3. Detect edit intent — if itinerary exists AND prompt sounds like a modification
-        const editKeywords = ['change', 'swap', 'remove', 'replace', 'add', 'update', 'delete', 'move', 'shift', 'reduce', 'make', 'optimize', 'fewer', 'more', 'day'];
+        const editKeywords = ['change day', 'swap', 'remove the', 'replace', 'add activity', 'update day', 'delete', 'move to day', 'fewer activities', 'make it cheaper'];
         const isEditRequest = aiItinerary && editKeywords.some(kw => userPrompt.toLowerCase().includes(kw));
 
         try {

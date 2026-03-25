@@ -21,11 +21,19 @@ const SearchForm = ({ onSearch, isLoading }) => {
     setInterests(prev => prev.includes(tag) ? prev.filter(i => i !== tag) : [...prev, tag]);
   };
 
+  const [formError, setFormError] = useState(null);
+
   const handleSearchClick = () => {
+    const parsedBudget = parseFloat(budget);
     if (!fromCity || !toCity || !departDate) {
-      alert("Please select cities and date.");
+      setFormError("Please select cities and a departure date.");
       return;
     }
+    if (isNaN(parsedBudget) || parsedBudget <= 0) {
+      setFormError("Please enter a valid budget greater than 0.");
+      return;
+    }
+    setFormError(null);
 
     // ✅ SENDING ALL DATA
     onSearch({
@@ -157,6 +165,12 @@ const SearchForm = ({ onSearch, isLoading }) => {
           ))}
         </div>
       </div>
+
+      {formError && (
+        <div className="mb-6 p-4 rounded-xl bg-red-50 border border-red-100 text-red-600 text-sm font-medium tracking-wide">
+          {formError}
+        </div>
+      )}
 
       <button
         onClick={handleSearchClick}

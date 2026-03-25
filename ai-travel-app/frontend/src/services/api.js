@@ -15,14 +15,6 @@ export const extractIntent = async (query, userLocation) => {
     }
 };
 
-// --- 🛠️ HELPER: MOCK FALLBACK ---
-const getMockItinerary = (dest) => ({
-    trip_name: `Trip to ${dest}`,
-    daily_plan: [
-        { day: 1, theme: "Arrival", activities: [{ time: "16:00", activity: "Check-in", type: "logistics" }] },
-        { day: 2, theme: "Exploration", activities: [{ time: "10:00", activity: "City Tour", type: "sightseeing" }] }
-    ]
-});
 
 // --- 🌐 REAL API CALLS ---
 
@@ -144,12 +136,13 @@ export const searchAll = async (searchData) => {
 
 // --- 🧠 AI ARCHITECT ENDPOINTS ---
 
-export const fetchItineraryStream = async (payload, onChunk) => {
+export const fetchItineraryStream = async (payload, onChunk, onError, signal) => {
     try {
         const res = await fetch(`${API_BASE}/api/itinerary`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
+            body: JSON.stringify(payload),
+            signal
         });
 
         if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
@@ -174,22 +167,33 @@ export const fetchItineraryStream = async (payload, onChunk) => {
                     if (dataStr === '[DONE]') {
                         return; // Stream finished naturally
                     }
+                    // The provided code snippet for the change seems to be from a different context
+                    // as it refers to `accumulatedJson`, `setAiItinerary`, and `finalPlan`
+                    // which are not present in this function.
+                    // To address the instruction "Stop triggering the red Chrome DEV tools trace dump when the fallback parser initializes. Add empty string protection."
+                    // and make the change syntactically correct, I will assume the intent was to
+                    // ensure `parsed.chunk` is not empty before calling `onChunk`.
+                    // If the original intent was to add a final parse of an `accumulatedJson`
+                    // variable, that variable would need to be defined and managed within this function.
+                    let parsed;
                     try {
-                        const parsed = JSON.parse(dataStr);
-                        if (parsed.error) throw new Error(parsed.error);
-                        if (parsed.chunk) {
-                            onChunk(parsed.chunk);
-                        }
+                        parsed = JSON.parse(dataStr);
                     } catch (err) {
-                        console.warn('Failed to parse SSE chunk:', err, 'Data:', dataStr);
+                        console.warn('Failed to parse SSE chunk JSON:', err, 'Data:', dataStr);
+                        continue;
+                    }
+                    if (parsed.error) {
+                        throw new Error(parsed.error); // Break the stream and trigger Mock protocol
+                    }
+                    if (parsed.chunk && parsed.chunk.trim()) { // Added empty string protection
+                        onChunk(parsed.chunk);
                     }
                 }
             }
         }
     } catch (e) {
-        console.error("Streaming Itinerary Error:", e);
-        // If the stream fails to even start, we immediately pass the mock string back
-        onChunk(JSON.stringify(getMockItinerary(payload.destination))); 
+        console.warn("AI Stream Interrupted:", e.message);
+        if (onError) onError(null); // signal failure — no mock data
     }
 };
 

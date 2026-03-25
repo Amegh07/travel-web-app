@@ -1,96 +1,10 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Clock, Navigation, Info, Utensils, Share, Printer, Plus, Edit2, Camera, LifeBuoy, X, Loader2, Sparkles, Ticket } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { chatWithAI } from '../services/api';
+import { ArrowLeft, Clock, Utensils, Share, Printer, Plus, Edit2, Camera } from 'lucide-react';
+import { motion } from 'framer-motion';
 
 
-const RescueMeModal = ({ isOpen, onClose, destination, dayData }) => {
-    const [loading, setLoading] = useState(false);
-    const [options, setOptions] = useState([]);
 
-    useEffect(() => {
-        if (isOpen && options.length === 0) {
-            setLoading(true);
-            const fetchRescueOptions = async () => {
-                try {
-                    // Simulate context gathering
-                    const currentHour = new Date().getHours();
-                    const contextStr = `The user is currently in ${destination || 'their destination'} on Day ${dayData?.dayNumber}. It is currently hour ${currentHour} of the day. They have unexpected free time right now (about 2-3 hours) and are feeling tired or need a quick pivot. Generate exactly 3 highly specific "Micro-Itineraries" to kill time. Options should be relaxing, nearby, and low-friction (e.g., a specific cafe, an indoor museum if it's hot/raining, a quiet park). Return JSON array of 3 strings. Format: { "options": ["Option 1 text...", "Option 2 text...", "Option 3 text..."] }`;
-                    
-                    const res = await chatWithAI(contextStr);
-                    if (res && res.options) {
-                        setOptions(res.options);
-                    } else {
-                        throw new Error("Invalid response format");
-                    }
-                } catch (e) {
-                    console.error("Rescue Me Error:", e);
-                    setOptions([
-                        "Find a highly-rated local coffee shop within 2 blocks to rest your feet.",
-                        "Head back to the hotel for a 90-minute reset and shower.",
-                        "Open Google Maps and find the nearest indoor public gallery or museum."
-                    ]);
-                } finally {
-                    setLoading(false);
-                }
-            };
-            fetchRescueOptions();
-        }
-    }, [isOpen, destination, dayData, options.length]);
-
-    if (!isOpen) return null;
-
-    return (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-[#1C1916]/40 backdrop-blur-sm" onClick={onClose} />
-            <motion.div 
-                initial={{ opacity: 0, scale: 0.95, y: 20 }} 
-                animate={{ opacity: 1, scale: 1, y: 0 }} 
-                exit={{ opacity: 0, scale: 0.95, y: 20 }}
-                className="relative bg-[#FDFCFA] border border-[#E8E4DC] rounded-[2rem] p-8 max-w-lg w-full shadow-[0_32px_96px_rgba(28,25,22,0.2)] overflow-hidden"
-            >
-                {/* Decorative background glow */}
-                <div className="absolute top-0 right-0 w-64 h-64 bg-orange-500/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2" />
-                
-                <div className="flex justify-between items-start mb-6 relative z-10">
-                    <div>
-                        <div className="flex items-center gap-2 text-orange-600 font-bold text-xs uppercase tracking-widest mb-2">
-                            <LifeBuoy size={14} /> Contextual Rescue
-                        </div>
-                        <h2 className="serif-text text-3xl font-light tracking-tight text-[#1C1916]">Need to kill time?</h2>
-                        <p className="text-sm text-[#9C9690] mt-1">Based on your location and the current time, here are 3 low-friction ways to pivot.</p>
-                    </div>
-                    <button onClick={onClose} className="p-2 bg-[#F4F1EB] hover:bg-[#E8E4DC] rounded-full text-[#9C9690] transition-colors">
-                        <X size={16} />
-                    </button>
-                </div>
-
-                <div className="space-y-3 relative z-10 min-h-[160px]">
-                    {loading ? (
-                        <div className="absolute inset-0 flex flex-col items-center justify-center text-[#9C9690]">
-                            <Loader2 size={24} className="animate-spin mb-3 text-[#B89A6A]" />
-                            <p className="text-sm">Analyzing local area...</p>
-                        </div>
-                    ) : (
-                        options.map((opt, i) => (
-                            <button key={i} className="w-full text-left p-4 bg-white border border-[#E8E4DC] rounded-2xl hover:border-[#B89A6A] hover:shadow-md transition-all group">
-                                <div className="flex gap-4">
-                                    <div className="w-8 h-8 rounded-full bg-[#F4F1EB] group-hover:bg-[#B89A6A]/10 text-[#9C9690] group-hover:text-[#B89A6A] flex items-center justify-center font-bold text-xs transition-colors flex-shrink-0">
-                                        {i + 1}
-                                    </div>
-                                    <div className="text-sm text-[#5A554A] group-hover:text-[#1C1916] leading-relaxed transition-colors">
-                                        {opt}
-                                    </div>
-                                </div>
-                            </button>
-                        ))
-                    )}
-                </div>
-            </motion.div>
-        </div>
-    );
-};
 
 const DayDetailPage = () => {
     const { tripId: _tripId, dayNumber: _dayNumber } = useParams();
@@ -98,7 +12,6 @@ const DayDetailPage = () => {
     const [viewMode, setViewMode] = useState('full'); // 'summary' | 'full' | 'printable'
     const [dayData, setDayData] = useState(null);
     const [error, setError] = useState(null);
-    const [showRescueModal, setShowRescueModal] = useState(false);
     const searchDataCache = localStorage.getItem('travex_search') || sessionStorage.getItem('travex_search');
     const searchDataObj = searchDataCache ? JSON.parse(searchDataCache) : {};
     const destName = searchDataObj.toCity?.name || searchDataObj.toCity || 'Destination';
@@ -233,26 +146,9 @@ const DayDetailPage = () => {
                         <button className="bg-[#FDFCFA] p-2 rounded-full border border-[#E8E4DC] text-[#1C1916] hover:bg-[#E8E4DC] transition-colors" onClick={() => window.print()}>
                             <Printer className="w-4 h-4" />
                         </button>
-                        <button 
-                            onClick={() => setShowRescueModal(true)}
-                            className="bg-orange-50 border border-orange-200 text-orange-600 px-4 py-1.5 rounded-full text-[10px] uppercase font-bold tracking-widest hover:bg-orange-100 transition-colors flex items-center gap-1.5 whitespace-nowrap"
-                        >
-                            <LifeBuoy size={14} /> Rescue Me
-                        </button>
                     </div>
                 </div>
             </header>
-
-            <AnimatePresence>
-                {showRescueModal && (
-                    <RescueMeModal 
-                        isOpen={showRescueModal} 
-                        onClose={() => setShowRescueModal(false)} 
-                        destination={destName}
-                        dayData={data}
-                    />
-                )}
-            </AnimatePresence>
 
             <div className="max-w-7xl mx-auto px-6 py-8">
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">

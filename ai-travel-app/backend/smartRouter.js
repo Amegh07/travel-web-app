@@ -8,13 +8,13 @@ dotenv.config();
 // 🧠 SOTA MODEL CONFIGURATION (Updated)
 // ==========================================
 const ModelConfig = {
-  // 🏆 THE BIG BRAIN: Llama 3.3 70B (DeepSeek was decommissioned by Groq)
+  // 🏆 Best for complex JSON itinerary plans
   REASONING: "llama-3.3-70b-versatile",
 
-  // ⚡ THE FAST BRAIN: Llama 3.1 8B (Best for sub-second NLP extraction and chat)
+  // ⚡ Best for fast chat, NLP extraction, routing
   FAST: "llama-3.1-8b-instant",
 
-  // ⚖️ THE GENERALIST: Llama 3.3 70B (Excellent for creative descriptions and vibe checking)
+  // 🧠 Generalist fallback
   GENERAL: "llama-3.3-70b-versatile"
 };
 
@@ -81,7 +81,7 @@ class KeyManager {
     if (!keyData?.key) throw new Error(`No available Groq Key for role: ${role}`);
 
     return {
-      client: new Groq({ apiKey: keyData.key }),
+      client: new Groq({ apiKey: keyData.key, timeout: 300000 }), // 5-minute timeout for heavy reasoning tasks
       keyId: keyData.id
     };
   }
@@ -91,7 +91,17 @@ class KeyManager {
     return new Amadeus({ clientId: k.clientId, clientSecret: k.clientSecret });
   }
 
-  reportFailure(id, err) { console.error(`Key Error ${id}:`, err.message); }
+  reportFailure(id, err) {
+    console.error(`Key Error ${id}:`, err.message);
+    const health = this.keyHealth.get(id);
+    if (health) {
+      health.errors += 1;
+      if (err.status === 429 || health.errors >= 3) {
+        health.isBlocked = true;
+        setTimeout(() => { health.isBlocked = false; health.errors = 0; }, 60000);
+      }
+    }
+  }
 }
 
 export const keyManager = new KeyManager();
@@ -109,7 +119,7 @@ export async function runAgent(role, systemPrompt, userContent) {
   if (role === AgentRole.ARCHITECT || role === AgentRole.MAPPING || role === AgentRole.INSPECTOR) {
     model = ModelConfig.REASONING;
     temp = 0.1;
-    maxTokens = 4096; // Heavy agents need more output room
+    maxTokens = 8192; // Itineraries need space — 8k ensures no truncation
   }
   // 2. Creative Guidance (Llama 3.3 70B)
   else if (role === AgentRole.GUIDE) {
@@ -166,7 +176,7 @@ export async function runAgent(role, systemPrompt, userContent) {
 // ==========================================
 // 🌊 STREAMING AGENT EXECUTION
 // ==========================================
-export async function* runAgentStream(role, systemPrompt, userContent) {
+export async function* runAgentStream(role, systemPrompt, userContent, signal = null) {
   const { client, keyId } = keyManager.getGroqClient(role);
 
   let model = ModelConfig.FAST;
@@ -176,7 +186,7 @@ export async function* runAgentStream(role, systemPrompt, userContent) {
   if (role === AgentRole.ARCHITECT || role === AgentRole.MAPPING || role === AgentRole.INSPECTOR) {
     model = ModelConfig.REASONING;
     temp = 0.1;
-    maxTokens = 4096;
+    maxTokens = 8192; // Itineraries need space — 8k ensures no truncation
   } else if (role === AgentRole.GUIDE) {
     model = ModelConfig.GENERAL;
     temp = 0.6;
@@ -185,36 +195,39 @@ export async function* runAgentStream(role, systemPrompt, userContent) {
 
   console.log(`🌊 Booting Streaming Agent: [${role}] using Key [${keyId}] on Model [${model}]`);
 
+  const streamOptions = {
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userContent }
+    ],
+    model: model,
+    temperature: temp,
+    max_tokens: maxTokens,
+    stream: true,
+  };
+
   try {
-    const stream = await client.chat.completions.create({
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userContent }
-      ],
-      model: model,
-      temperature: temp,
-      max_tokens: maxTokens,
-      stream: true,
-    });
+    const stream = await client.chat.completions.create(streamOptions, { signal });
 
     for await (const chunk of stream) {
       const text = chunk.choices[0]?.delta?.content || "";
       if (text) yield text;
     }
   } catch (error) {
+    if (error.name === 'AbortError' || error.constructor.name === 'APIUserAbortError') {
+      console.log(`🌊 Stream aborted by client [${role}].`);
+      return;
+    }
     if (error.status === 429 && model !== ModelConfig.FAST) {
       console.warn(`⚠️ Streaming 429 Rate Limit on [${model}]. Falling back to [${ModelConfig.FAST}]...`);
       try {
-        const fallbackStream = await client.chat.completions.create({
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userContent }
-          ],
-          model: ModelConfig.FAST,
-          temperature: 0.5,
-          max_tokens: 1500,
-          stream: true,
-        });
+        // Use a different API key explicitly to escape the block
+        const fallbackKeyData = keyManager.getGroqClient(AgentRole.CFO);
+        const fallbackClient = fallbackKeyData.client;
+        console.warn(`♻️ Swapping to fallback key: [${fallbackKeyData.keyId}]`);
+
+        const fallbackOptions = { ...streamOptions, model: ModelConfig.FAST, temperature: 0.5, max_tokens: 1500 };
+        const fallbackStream = await fallbackClient.chat.completions.create(fallbackOptions, { signal });
 
         for await (const chunk of fallbackStream) {
           const text = chunk.choices[0]?.delta?.content || "";

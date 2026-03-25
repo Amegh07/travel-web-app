@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { MapPin, Navigation, Camera, Utensils, Moon, Sun, Map, ArrowRight, Info, X, ExternalLink } from 'lucide-react';
+import { MapPin, Navigation, Camera, Utensils, Moon, Sun, Map, Info, X, ExternalLink } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 // ── Activity type icon — warm palette
@@ -144,7 +144,12 @@ const ItineraryTimeline = ({ plan, currency = 'INR' }) => {
                                                                 ? 'bg-[#E8E4DC] text-[#9C9690]'
                                                                 : 'bg-[#1C1916] text-[#B89A6A]'
                                                             }`}>
-                                                            {typeof act.time === 'string' ? act.time.substring(0, 5) : act.time}
+                                                            {((t) => {
+                                                                if (!t) return '--:--';
+                                                                const s = String(t);
+                                                                if (/^\d{2}:\d{2}/.test(s)) return s.substring(0, 5);
+                                                                return s;
+                                                            })(act.time)}
                                                         </div>
                                                     </div>
 
