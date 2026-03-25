@@ -485,19 +485,19 @@ Follow this level of specificity, professional tone, and format exactly for ${de
         res.setHeader('Content-Type', 'text/event-stream');
         res.setHeader('Cache-Control', 'no-cache');
         res.setHeader('Connection', 'keep-alive');
-        
+
         // We skip the inspector agent here to guarantee a fast TTFB (Time to First Byte).
         // The Architect instructions are robust enough.
         console.log(`   🌊 Streaming Architect's plan to client...`);
-        
+
         try {
             const stream = runAgentStream(AgentRole.ARCHITECT, systemPrompt, userContent);
-            
+
             for await (const chunk of stream) {
                 // Send standard SSE format
                 res.write(`data: ${JSON.stringify({ chunk })}\n\n`);
             }
-            
+
             // Send completion message
             res.write(`data: [DONE]\n\n`);
             res.end();
@@ -506,7 +506,7 @@ Follow this level of specificity, professional tone, and format exactly for ${de
             res.write(`data: ${JSON.stringify({ error: "Stream aborted" })}\n\n`);
             res.end();
         }
-        
+
     } catch (error) {
         console.error("Architect Setup Error:", error);
         if (!res.headersSent) {
@@ -562,7 +562,246 @@ app.post('/api/webhooks/flights', async (req, res) => {
         res.status(500).json({ error: "Failed to process webhook" });
     }
 });
+// ============================================================
+// PASTE BOTH OF THESE ROUTES INTO server/index.js
+// Place them BEFORE the existing --- CHAT & OTHERS --- section
+// ============================================================
 
+
+// ==================================================
+// 📦 ROUTE: SEARCH ALL (Batch: Flights + Hotels + Events)
+// ==================================================
+app.post('/api/search-all', async (req, res) => {
+    try {
+        const { searchData } = req.body;
+        const {
+            fromCity,
+            toCity,
+            departDate,
+            returnDate,
+            budget,
+            currency = 'INR',
+            interests = []
+        } = searchData || {};
+
+        // Resolve city names/codes for API calls
+        const originName = typeof fromCity === 'object' ? (fromCity.name || fromCity.code) : fromCity;
+        const destName = typeof toCity === 'object' ? (toCity.name || toCity.code) : toCity;
+        const originCode = typeof fromCity === 'object' ? (fromCity.code || fromCity.name) : fromCity;
+        const destCode = typeof toCity === 'object' ? (toCity.code || toCity.name) : toCity;
+
+        // Calculate check-out date (fallback: depart + 3 days)
+        const checkIn = departDate;
+        const checkOut = returnDate || (() => {
+            const d = new Date(departDate);
+            d.setDate(d.getDate() + 3);
+            return d.toISOString().split('T')[0];
+        })();
+
+        console.log(`\n📦 /api/search-all triggered`);
+        console.log(`   ✈️  ${originName} (${originCode}) → ${destName} (${destCode})`);
+        console.log(`   📅  ${checkIn} → ${checkOut} | ${currency} ${budget}`);
+
+        // --- Run all three fetches IN PARALLEL for speed ---
+        const [flightResult, hotelResult, eventResult] = await Promise.allSettled([
+
+            // 1. FLIGHTS
+            (async () => {
+                const originData = await resolveCityData(originCode);
+                const destData = await resolveCityData(destCode);
+                const amadeus = keyManager.getAmadeusClient("FLIGHTS");
+
+                const response = await amadeus.shopping.flightOffersSearch.get({
+                    originLocationCode: originData.iata,
+                    destinationLocationCode: destData.iata,
+                    departureDate: checkIn,
+                    adults: '1',
+                    max: '10',
+                    ...(currency && { currencyCode: currency })
+                });
+                return {
+                    type: 'multi_modal',
+                    results: response.data,
+                    journey: { originHub: originData.iata, destHub: destData.iata }
+                };
+            })(),
+
+            // 2. HOTELS
+            (async () => {
+                const cityData = await resolveCityData(destName);
+                if (!cityData.geo) return [];
+
+                const amadeus = keyManager.getAmadeusClient("HOTELS");
+                const geoResponse = await amadeus.referenceData.locations.hotels.byGeocode.get({
+                    latitude: cityData.geo.latitude,
+                    longitude: cityData.geo.longitude,
+                    radius: 10,
+                    radiusUnit: 'KM',
+                });
+
+                const sorted = [...geoResponse.data].sort((a, b) => (a.distance?.value || 99) - (b.distance?.value || 99));
+                const topHotels = sorted.slice(0, 20);
+                const hotelIds = topHotels.map(h => h.hotelId).join(',');
+
+                // Try real pricing
+                let offersMap = {};
+                if (checkIn && checkOut && hotelIds) {
+                    try {
+                        const offersResponse = await amadeus.shopping.hotelOffersSearch.get({
+                            hotelIds,
+                            checkInDate: checkIn,
+                            checkOutDate: checkOut,
+                            adults: '1',
+                            currencyCode: currency,
+                            bestRateOnly: true
+                        });
+                        offersResponse.data.forEach(offer => {
+                            const price = offer.offers?.[0]?.price?.total;
+                            if (price) offersMap[offer.hotel.hotelId] = parseFloat(price);
+                        });
+                    } catch {
+                        console.log('   ⚠️ Hotel pricing unavailable, using estimates.');
+                    }
+                }
+
+                const nights = Math.max(1, Math.ceil(Math.abs(new Date(checkOut) - new Date(checkIn)) / (1000 * 60 * 60 * 24)));
+                const dailyBudget = parseFloat(budget || 5000) / nights;
+                const currencySymbol = currency === 'USD' ? '$' : currency === 'EUR' ? '€' : '₹';
+
+                let estimatedPrice;
+                if (currency === 'USD') estimatedPrice = dailyBudget >= 800 ? 350 : dailyBudget >= 300 ? 180 : 90;
+                else if (currency === 'EUR') estimatedPrice = dailyBudget >= 800 ? 300 : dailyBudget >= 300 ? 150 : 80;
+                else estimatedPrice = dailyBudget >= 60000 ? 15000 : dailyBudget >= 20000 ? 6000 : dailyBudget >= 8000 ? 3000 : 1500;
+
+                const randomizePrice = (base, idString) => {
+                    const hash = Array.from(idString).reduce((acc, char) => acc + char.charCodeAt(0), 0);
+                    return Math.floor(base * (1 + ((hash % 40) - 20) / 100));
+                };
+
+                return topHotels.slice(0, 6).map(h => {
+                    const realTotal = offersMap[h.hotelId];
+                    let pricePerNight = realTotal ? (realTotal / nights) : randomizePrice(estimatedPrice, h.hotelId);
+
+                    if (currency === 'INR' && pricePerNight < 1000) pricePerNight = 1000 + Math.random() * 500;
+                    if (currency === 'USD' && pricePerNight < 50) pricePerNight = 50 + Math.random() * 20;
+                    if (currency === 'EUR' && pricePerNight < 50) pricePerNight = 50 + Math.random() * 20;
+
+                    return {
+                        id: h.hotelId,
+                        name: h.name,
+                        image: `https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&w=800&q=80`,
+                        rating: h.rating || '4.0',
+                        price: `${currencySymbol}${Math.floor(pricePerNight)}/night`,
+                        isRealPrice: !!realTotal,
+                        distance: `${h.distance?.value?.toFixed(1) || "1"} ${h.distance?.unit || "KM"} from center`
+                    };
+                });
+            })(),
+
+            // 3. EVENTS
+            (async () => {
+                const realEvents = await fetchTicketmasterEvents(destName, checkIn);
+                if (realEvents) return realEvents;
+
+                // AI fallback
+                const result = await runAgent(
+                    AgentRole.GUIDE,
+                    "You are a local guide. Return strict JSON array: [{ id, title, category, description, price, date }]. Return ONLY valid JSON, nothing else.",
+                    `Find 4 interesting cultural activities or events in ${destName} around ${checkIn}. Mix music, food, arts, and local experiences.`
+                );
+                return JSON.parse(result);
+            })()
+        ]);
+
+        // --- Unwrap settled results safely ---
+        const transportData = flightResult.status === 'fulfilled'
+            ? flightResult.value
+            : { type: 'none', results: [] };
+
+        const hotelData = hotelResult.status === 'fulfilled'
+            ? hotelResult.value
+            : [];
+
+        const eventData = eventResult.status === 'fulfilled'
+            ? eventResult.value
+            : [];
+
+        // --- Hero image via Unsplash (free, no key needed) ---
+        const heroImage = `https://images.unsplash.com/photo-1499856871958-5b9627545d1a?auto=format&fit=crop&w=1600&q=80`;
+
+        console.log(`   ✅ search-all complete: ${transportData.results?.length || 0} flights, ${hotelData.length} hotels, ${eventData.length} events`);
+
+        res.json({ transportData, hotelData, eventData, heroImage });
+
+    } catch (error) {
+        console.error('❌ /api/search-all Error:', error.message);
+        res.json({
+            transportData: { type: 'none', results: [] },
+            hotelData: [],
+            eventData: [],
+            heroImage: null
+        });
+    }
+});
+
+
+// ==================================================
+// 🤖 ROUTE: MODIFY ITINERARY (Chatbot Edit Engine)
+// ==================================================
+app.post('/api/modify-itinerary', async (req, res) => {
+    try {
+        const { prompt, currentItinerary } = req.body;
+
+        if (!prompt || !currentItinerary) {
+            return res.status(400).json({ error: 'Missing prompt or currentItinerary' });
+        }
+
+        console.log(`\n🤖 /api/modify-itinerary triggered`);
+        console.log(`   📝 User request: "${prompt}"`);
+
+        const systemPrompt = `You are Travex's Elite Itinerary Editor. The user wants to modify their existing travel itinerary.
+
+YOUR RULES:
+1. Apply ONLY the change the user requested. Do not redesign the entire trip.
+2. Preserve all other days and activities exactly as-is.
+3. Keep the same JSON structure as the input — do not add or remove fields.
+4. Maintain realistic cost estimates in the same currency.
+5. Return ONLY the updated itinerary JSON — no preamble, no explanation, no markdown.
+6. Keep all emojis, localness_signal values, latitude/longitude, and transit instructions.
+
+OUTPUT: Return the full updated itinerary JSON starting with { and ending with }.`;
+
+        const userContent = `User's edit request: "${prompt}"
+
+Current itinerary to modify:
+${JSON.stringify(currentItinerary, null, 2)}`;
+
+        const result = await runAgent(AgentRole.ARCHITECT, systemPrompt, userContent);
+
+        // Strip any think tags or markdown fences the model might add
+        const cleaned = result
+            .replace(/<think>[\s\S]*?<\/think>/g, '')
+            .replace(/```json/gi, '')
+            .replace(/```/g, '')
+            .trim();
+
+        const updatedItinerary = JSON.parse(cleaned);
+
+        console.log(`   ✅ Itinerary modified successfully.`);
+
+        res.json({
+            updatedItinerary,
+            message: `Done! I've applied your change: "${prompt}". Scroll up to see the updated plan.`
+        });
+
+    } catch (error) {
+        console.error('❌ /api/modify-itinerary Error:', error.message);
+        res.status(500).json({
+            error: 'Failed to modify itinerary',
+            updatedItinerary: null
+        });
+    }
+});
 // --- CHAT & OTHERS ---
 app.post('/api/mapping', async (req, res) => { res.json({ logistics: [] }); });
 app.post('/api/cfo', async (req, res) => { res.json({ status: "safe" }); });
