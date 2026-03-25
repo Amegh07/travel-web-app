@@ -543,7 +543,6 @@ const ResultsPage = ({ searchData, onBack }) => {
     };
 
     // --- SELECTION TOGGLES ---
-    // Note: We ONLY update state here. The useEffect below will handle firing the AI.
     const toggleFlight = (flight) => {
         if (isStreamingRef.current) {
             abortControllerRef.current?.abort();
@@ -551,15 +550,20 @@ const ResultsPage = ({ searchData, onBack }) => {
         }
 
         if (confirmedFlight?.id === flight.id) {
+            // Deselect
             setConfirmedFlight(null);
             setAiItinerary(null);
             setMiniMapData(null);
-            plannerHasFired.current = false; // Reset lock so it can fire again later
+            plannerHasFired.current = false;
         } else {
+            // Select — then directly trigger the stream if hotel is also locked in
             setConfirmedFlight(flight);
             setAiItinerary(null);
             setMiniMapData(null);
-            plannerHasFired.current = false; // Reset lock to trigger new generation
+            plannerHasFired.current = false;
+            if (confirmedHotel) {
+                setTimeout(() => startStream(flight, confirmedHotel), 0);
+            }
         }
     };
 
@@ -570,15 +574,20 @@ const ResultsPage = ({ searchData, onBack }) => {
         }
 
         if (confirmedHotel?.id === hotel.id) {
+            // Deselect
             setConfirmedHotel(null);
             setAiItinerary(null);
             setMiniMapData(null);
-            plannerHasFired.current = false; // Reset lock
+            plannerHasFired.current = false;
         } else {
+            // Select — then directly trigger the stream if flight is also locked in
             setConfirmedHotel(hotel);
             setAiItinerary(null);
             setMiniMapData(null);
-            plannerHasFired.current = false; // Reset lock to trigger new generation
+            plannerHasFired.current = false;
+            if (confirmedFlight) {
+                setTimeout(() => startStream(confirmedFlight, hotel), 0);
+            }
         }
     };
 
@@ -664,15 +673,12 @@ const ResultsPage = ({ searchData, onBack }) => {
     }, [searchData, hotels.length]);
 
 
-    // --- 2. AI UNLOCK LOGIC (THE CORRECTED, BULLETPROOF EFFECT) ---
-    useEffect(() => {
-        // Guard clause: Only run if both are selected and we haven't already fired
-        if (!confirmedFlight || !confirmedHotel || plannerHasFired.current) {
-            return;
-        }
+    // --- 2. AI STREAM: Direct-call (no useEffect dep-array instability) ---
+    const startStream = (flight, hotel) => {
+        if (!flight || !hotel || plannerHasFired.current) return;
 
-        console.log("🚀 AI Planner Triggered! Flight and Hotel are locked in.");
-        plannerHasFired.current = true; // 🔒 Lock immediately to prevent double-firing
+        console.log("🚀 startStream: flight", flight.id, "hotel", hotel.id);
+        plannerHasFired.current = true;
         setPlannerLoading(true);
         setBridgeLoading(true);
         setAiError(null);
@@ -681,99 +687,96 @@ const ResultsPage = ({ searchData, onBack }) => {
         abortControllerRef.current = controller;
         isStreamingRef.current = true;
 
-        const buildPlan = async () => {
-            try {
-                const totalBudget = parseFloat(searchData?.budget || 2000);
-                const flightCost = parseFloat(confirmedFlight?.price?.total || 0);
-                const hotelCost = parseFloat(confirmedHotel?.price?.replace(/[^0-9.]/g, '') || 0) * nights;
-                const remaining = Math.max(500, totalBudget - flightCost - hotelCost);
-                const dailyAllow = Math.floor(remaining / Math.max(1, nights));
+        const totalBudget = parseFloat(searchData?.budget || 2000);
+        const flightCost = parseFloat(flight?.price?.total || 0);
+        const hotelCost = parseFloat(hotel?.price?.replace(/[^0-9.]/g, '') || 0) * nights;
+        const remaining = Math.max(500, totalBudget - flightCost - hotelCost);
+        const dailyAllow = Math.floor(remaining / Math.max(1, nights));
 
-                const payload = {
-                    destination: destName,
-                    dates: { arrival: arrivalDate, departure: departureDate },
-                    hotel: confirmedHotel,
-                    flight: confirmedFlight,
-                    budget: {
-                        total: totalBudget,
-                        currency: journeyCurrency,
-                        remaining: remaining,
-                        dailyAllowance: dailyAllow
-                    },
-                    interests: searchData?.interests || [],
-                    tripType: tripType
-                };
+        const payload = {
+            destination: destName,
+            dates: { arrival: arrivalDate, departure: departureDate },
+            hotel,
+            flight,
+            budget: { total: totalBudget, currency: journeyCurrency, remaining, dailyAllowance: dailyAllow },
+            interests: searchData?.interests || [],
+            tripType
+        };
 
-                let accumulatedJson = "";
-
-                const tryParsePartialJSON = (jsonString) => {
-                    try { return JSON.parse(jsonString); } catch (e) {
-                        try {
-                            let cleaned = jsonString.replace(/,\s*$/, '');
-                            const openBraces = (cleaned.match(/\{/g) || []).length - (cleaned.match(/\}/g) || []).length;
-                            const openBrackets = (cleaned.match(/\[/g) || []).length - (cleaned.match(/\]/g) || []).length;
-                            if (cleaned.endsWith('"')) cleaned += '"';
-                            for (let i = 0; i < openBrackets; i++) cleaned += ']';
-                            for (let i = 0; i < openBraces; i++) cleaned += '}';
-                            return JSON.parse(cleaned);
-                        } catch { return null; }
-                    }
-                };
-
-                // IMPORTANT: Ensure your api.js fetchItineraryStream uses the full backend URL to avoid Vite Proxy timeout!
-                await fetchItineraryStream(payload, (chunk) => {
-                    accumulatedJson += chunk;
-                    const partialPlan = tryParsePartialJSON(accumulatedJson);
-                    if (partialPlan && partialPlan.daily_plan) {
-                        setAiItinerary(partialPlan);
-                    }
-                }, (errorData) => {
-                    setAiError("AI unavailable. Please check your API keys or try again shortly.");
-                }, controller.signal);
-
-                if (accumulatedJson.trim()) {
-                    try {
-                        const finalPlan = JSON.parse(accumulatedJson);
-                        if (finalPlan && finalPlan.daily_plan) setAiItinerary(finalPlan);
-                    } catch (e) {
-                        console.warn("Final JSON parse skipped during fallback protocol.");
-                    }
-                }
-            } catch (outerErr) {
-                if (outerErr.name === 'AbortError') {
-                    console.log("Stream correctly aborted by React cleanup.");
-                } else {
-                    console.error("buildPlan failed:", outerErr);
-                    setAiError("Connection interrupted. Please try again.");
-                }
-            } finally {
-                isStreamingRef.current = false;
-                setPlannerLoading(false);
-                setTimeout(() => {
-                    const airline = confirmedFlight?.validatingAirlineCodes?.[0] || 'Airline';
-                    setMiniMapData({
-                        origin: `${airline} Terminal`,
-                        destination: confirmedHotel?.name || 'Your Hotel',
-                        distance: "24 km", duration: "35 min", traffic: "Light Traffic",
-                        routeUrl: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(confirmedHotel?.name || '')}`
-                    });
-                    setBridgeLoading(false);
-                }, 1000);
+        const tryParsePartialJSON = (s) => {
+            let cleaned = s.trim();
+            const firstBrace = cleaned.indexOf('{');
+            const lastBrace = cleaned.lastIndexOf('}');
+            if (firstBrace !== -1 && lastBrace !== -1 && lastBrace >= firstBrace) {
+                cleaned = cleaned.substring(firstBrace, lastBrace + 1);
+            }
+            
+            try { return JSON.parse(cleaned); } catch {
+                try {
+                    let c = cleaned.replace(/,\s*$/, '');
+                    const ob = (c.match(/\{/g)||[]).length - (c.match(/\}/g)||[]).length;
+                    const obk = (c.match(/\[/g)||[]).length - (c.match(/\]/g)||[]).length;
+                    if (c.endsWith('"')) c += '"';
+                    for (let i=0;i<obk;i++) c+=']';
+                    for (let i=0;i<ob;i++) c+='}';
+                    return JSON.parse(c);
+                } catch (e) { return null; }
             }
         };
 
-        buildPlan();
+        let accumulated = "";
 
-        // Cleanup: Run if component unmounts or dependencies change mid-stream
-        return () => {
-            if (isStreamingRef.current) {
-                console.log("🛑 Unmounting: Aborting AI Stream...");
-                controller.abort();
-                isStreamingRef.current = false;
-                plannerHasFired.current = false; // Allow trigger on remount
+        fetchItineraryStream(payload,
+            (chunk) => {
+                accumulated += chunk;
+                const p = tryParsePartialJSON(accumulated);
+                if (p?.daily_plan) setAiItinerary(p);
+            },
+            () => setAiError("AI unavailable. Please check your API keys or try again shortly."),
+            controller.signal
+        ).then(() => {
+            if (accumulated.trim()) {
+                try { 
+                    let cleaned = accumulated.trim();
+                    const firstBrace = cleaned.indexOf('{');
+                    const lastBrace = cleaned.lastIndexOf('}');
+                    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace >= firstBrace) {
+                        cleaned = cleaned.substring(firstBrace, lastBrace + 1);
+                    }
+                    const f = JSON.parse(cleaned); 
+                    if (f?.daily_plan) setAiItinerary(f); 
+                }
+                catch (e) {
+                    console.warn("Final JSON parse skipped.", e);
+                }
             }
-        };
-    }, [confirmedFlight, confirmedHotel, arrivalDate, departureDate, destName, searchData, nights, journeyCurrency, tripType]);
+        }).catch((err) => {
+            if (err?.name !== 'AbortError') {
+                console.error("startStream error:", err);
+                setAiError("Connection interrupted. Please try again.");
+            }
+        }).finally(() => {
+            isStreamingRef.current = false;
+            setPlannerLoading(false);
+            setTimeout(() => {
+                setMiniMapData({
+                    origin: `${flight?.validatingAirlineCodes?.[0] || 'Airline'} Terminal`,
+                    destination: hotel?.name || 'Your Hotel',
+                    distance: "24 km", duration: "35 min", traffic: "Light Traffic",
+                    routeUrl: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(hotel?.name || '')}`
+                });
+                setBridgeLoading(false);
+            }, 1000);
+        });
+    };
+
+    // On page reload: if both were cached, fire once on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    useEffect(() => {
+        if (confirmedFlight && confirmedHotel && !plannerHasFired.current && !aiItinerary) {
+            startStream(confirmedFlight, confirmedHotel);
+        }
+    }, []); // Empty: runs exactly once on mount
 
 
     const bgImage = heroImage || `https://images.unsplash.com/photo-1499856871958-5b9627545d1a?auto=format&fit=crop&w=1600&q=80`;

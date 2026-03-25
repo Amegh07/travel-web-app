@@ -44,27 +44,27 @@ export const searchCities = async (keyword) => {
 };
 
 // 2. ChatBot (The Concierge)
-export const chatWithAI = async (message) => {
+export const chatWithAI = async (message, context = {}) => {
     try {
         const res = await fetch(`${API_BASE}/api/chat`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message })
+            body: JSON.stringify({ message, context })
         });
         if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
         return await res.json();
     } catch (error) {
         console.error("Chat API Error:", error);
-        return null; // Don't throw to caller, just return null so UI handles gracefully
+        return null; 
     }
 };
 
-export const modifyItinerary = async (prompt, currentItinerary) => {
+export const modifyItinerary = async (prompt, currentItinerary, context = {}) => {
     try {
         const res = await fetch(`${API_BASE}/api/modify-itinerary`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt, currentItinerary })
+            body: JSON.stringify({ prompt, currentItinerary, context })
         });
         if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
         return await res.json();

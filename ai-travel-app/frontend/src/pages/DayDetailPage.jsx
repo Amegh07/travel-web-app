@@ -1,20 +1,34 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Clock, Utensils, Share, Printer, Plus, Edit2, Camera } from 'lucide-react';
+import { ArrowLeft, Clock, Utensils, Share, Printer, Plus, Edit2, Camera, X, Navigation, Info, Ticket, ExternalLink } from 'lucide-react';
 import { motion } from 'framer-motion';
+import ChatBot from '../components/ChatBot';
 
-
-
-
-const DayDetailPage = () => {
-    const { tripId: _tripId, dayNumber: _dayNumber } = useParams();
+const DayDetailPage = ({ dayNumber: propDayNumber, tripId: propTripId, onClose }) => {
+    const params = useParams();
     const navigate = useNavigate();
+    const _tripId = propTripId || params.tripId;
+    const _dayNumber = propDayNumber || params.dayNumber;
+    const isModal = !!onClose;
     const [viewMode, setViewMode] = useState('full'); // 'summary' | 'full' | 'printable'
     const [dayData, setDayData] = useState(null);
+    const [fullItinerary, setFullItinerary] = useState(null);
+    const [refreshTrigger, setRefreshTrigger] = useState(0);
     const [error, setError] = useState(null);
     const searchDataCache = localStorage.getItem('travex_search') || sessionStorage.getItem('travex_search');
     const searchDataObj = searchDataCache ? JSON.parse(searchDataCache) : {};
     const destName = searchDataObj.toCity?.name || searchDataObj.toCity || 'Destination';
+
+    const handleItineraryUpdate = (updatedPlan) => {
+        setFullItinerary(updatedPlan);
+        const cache = localStorage.getItem('travex_results_cache');
+        if (cache) {
+            const parsed = JSON.parse(cache);
+            parsed.aiItinerary = updatedPlan;
+            localStorage.setItem('travex_results_cache', JSON.stringify(parsed));
+        }
+        setRefreshTrigger(prev => prev + 1);
+    };
 
     useEffect(() => {
         const loadMapData = async () => {
@@ -23,13 +37,14 @@ const DayDetailPage = () => {
                 if (cache) {
                     const parsed = JSON.parse(cache);
                     const plan = parsed.aiItinerary;
+                    setFullItinerary(plan);
                     if (plan && plan.daily_plan) {
                         const foundDay = plan.daily_plan.find(d => d.day.toString() === _dayNumber?.toString());
                         if (foundDay) {
                             const searchDataStr = sessionStorage.getItem('travex_search');
                             const searchData = searchDataStr ? JSON.parse(searchDataStr) : {};
                             const currencyMatch = searchData.currency === 'EUR' ? '€' : searchData.currency === 'GBP' ? '£' : searchData.currency === 'INR' ? '₹' : '$';
-                            
+
                             const mappedData = {
                                 tripId: _tripId,
                                 dayNumber: _dayNumber,
@@ -90,7 +105,7 @@ const DayDetailPage = () => {
             }
         };
         loadMapData();
-    }, [_dayNumber, _tripId]);
+    }, [_dayNumber, _tripId, refreshTrigger]);
 
     // View Modes Array
     const modes = [
@@ -111,15 +126,15 @@ const DayDetailPage = () => {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.4 }}
-            className={`min-h-screen bg-[#F4F1EB] font-sans text-[#1C1916] selection:bg-[#B89A6A]/20 ${printableClass}`}
+            className={`${isModal ? 'fixed inset-0 z-[200] overflow-y-auto w-full h-full' : 'min-h-screen'} bg-[#F4F1EB] font-sans text-[#1C1916] selection:bg-[#B89A6A]/20 ${printableClass}`}
         >
 
             {/* STICKY HEADER */}
             <header className="sticky top-0 z-40 bg-[#F4F1EB]/80 backdrop-blur-xl border-b border-[#E8E4DC]">
                 <div className="max-w-7xl mx-auto px-6 py-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
                     <div className="flex items-center gap-4">
-                        <button onClick={() => navigate(-1)} className="p-2 -ml-2 rounded-full hover:bg-[#E8E4DC] transition-colors text-[#9C9690] hover:text-[#1C1916] group">
-                            <ArrowLeft className="w-5 h-5 group-hover:-translate-x-1 transition-transform" />
+                        <button onClick={() => isModal ? onClose() : navigate(-1)} className="p-2 -ml-2 rounded-full hover:bg-[#E8E4DC] transition-colors text-[#9C9690] hover:text-[#1C1916] group">
+                            {isModal ? <X className="w-5 h-5" /> : <ArrowLeft className="w-5 h-5 group-hover:-translate-x-1 transition-transform" />}
                         </button>
                         <div>
                             <h1 className="serif-text text-2xl font-light tracking-tight">{data.meta.header}</h1>
@@ -192,7 +207,7 @@ const DayDetailPage = () => {
 
                                         {viewMode !== 'summary' && (
                                             <div className="space-y-5">
-                                            
+
                                                 {/* DESCRIPTION */}
                                                 {item.description && (
                                                     <div className="p-4 bg-[#F4F1EB] rounded-2xl border border-[#E8E4DC] text-sm text-[#5A554A] leading-relaxed">
@@ -249,7 +264,7 @@ const DayDetailPage = () => {
                                                     </span>
                                                 </div>
 
-                                                 <div className="flex items-center gap-2 flex-wrap">
+                                                <div className="flex items-center gap-2 flex-wrap">
                                                     {/* Google Maps directions button — always show */}
                                                     <button
                                                         onClick={() => {
@@ -309,14 +324,14 @@ const DayDetailPage = () => {
                                     const cache = (() => { try { return JSON.parse(localStorage.getItem('travex_results_cache') || '{}'); } catch { return {}; } })();
                                     const hotelName = cache.confirmedHotel?.name || '';
 
-                                    // ✅ FIX: Use real lat/lng coordinates for each stop
+                                    // ✅ FIX: Force Google Maps to use strict Business Names combined strictly with the destination city.
+                                    // Raw AI coordinates drop pins unreliably on runways/backroads.
                                     const stopsWithCoords = data.items
                                         .filter(it => !it.title.toLowerCase().includes('transit') && !it.title.toLowerCase().includes('check-in'))
                                         .map(it => ({
                                             label: it.title,
-                                            query: (it.location?.geo?.lat && it.location?.geo?.lng)
-                                                ? `${it.location.geo.lat},${it.location.geo.lng}`
-                                                : encodeURIComponent(it.title)
+                                            // Append currentSearch.destination so Google Maps heavily penalizes other global cities
+                                            query: encodeURIComponent(`${it.title}, ${cache.currentSearch?.destination || ''}`)
                                         }));
 
                                     if (stopsWithCoords.length === 0) return null;
@@ -359,31 +374,22 @@ const DayDetailPage = () => {
                                                 />
                                             </div>
 
-                                            {/* Route stop summary with coordinate indicator */}
+                                            {/* Route stop summary displaying highly-accurate names */}
                                             <div className="mt-3 space-y-1.5">
                                                 {stopsWithCoords.map((stop, si) => {
-                                                    const hasCoords = stop.query.match(/^-?\d+\.\d+,-?\d+\.\d+$/);
                                                     return (
                                                         <div key={si} className="flex items-center gap-2 text-xs">
                                                             <div className="w-5 h-5 rounded-full bg-[#1C1916] text-[#B89A6A] flex items-center justify-center text-[9px] font-bold flex-shrink-0">
                                                                 {si + 1}
                                                             </div>
                                                             <span className="text-[#1C1916] font-medium truncate">{stop.label}</span>
-                                                            {/* ✅ Green dot = exact coordinates, orange = name search */}
-                                                            <span
-                                                                title={hasCoords ? 'Exact GPS location' : 'Location searched by name'}
-                                                                className={`flex-shrink-0 w-1.5 h-1.5 rounded-full ${hasCoords ? 'bg-emerald-400' : 'bg-amber-400'}`}
-                                                            />
+                                                            <span className="flex-shrink-0 w-1.5 h-1.5 rounded-full bg-[#B89A6A]" />
                                                             {si < stopsWithCoords.length - 1 && (
                                                                 <span className="text-[#9C9690] text-[9px] ml-auto flex-shrink-0">→ next</span>
                                                             )}
                                                         </div>
                                                     );
                                                 })}
-                                                <p className="text-[9px] text-[#9C9690] mt-1 flex items-center gap-2">
-                                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block" /> Exact GPS &nbsp;
-                                                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block" /> Name search
-                                                </p>
                                             </div>
 
                                             {/* ✅ Opens full day route in Google Maps */}
@@ -422,6 +428,17 @@ const DayDetailPage = () => {
                     )}
                 </div>
             </div>
+
+            {/* AI CHATBOT INTEGRATION */}
+            {fullItinerary && (
+                <ChatBot 
+                    destination={destName} 
+                    aiItinerary={fullItinerary} 
+                    setAiItinerary={handleItineraryUpdate} 
+                    currentDay={_dayNumber}
+                    journeySymbol={searchDataObj.currency === 'EUR' ? '€' : searchDataObj.currency === 'GBP' ? '£' : searchDataObj.currency === 'INR' ? '₹' : '$'}
+                />
+            )}
         </motion.div>
     );
 };

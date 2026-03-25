@@ -12,7 +12,7 @@ const ModelConfig = {
   REASONING: "llama-3.3-70b-versatile",
 
   // ⚡ Best for fast chat, NLP extraction, routing
-  FAST: "llama-3.1-8b-instant",
+  FAST: "llama-3.3-70b-versatile",
 
   // 🧠 Generalist fallback
   GENERAL: "llama-3.3-70b-versatile"
@@ -115,10 +115,10 @@ export async function runAgent(role, systemPrompt, userContent) {
   let temp = 0.7;
   let maxTokens = 1500; // Default for fast agents
 
-  // 1. Heavy Auditing & Planning (DeepSeek-R1)
+  // 1. Heavy Auditing & Planning (DeepSeek-R1 / Llama 70b)
   if (role === AgentRole.ARCHITECT || role === AgentRole.MAPPING || role === AgentRole.INSPECTOR) {
     model = ModelConfig.REASONING;
-    temp = 0.1;
+    temp = 0.5; // Increased from 0.1 to allow high-end, creative travel writing
     maxTokens = 8192; // Itineraries need space — 8k ensures no truncation
   }
   // 2. Creative Guidance (Llama 3.3 70B)
@@ -185,7 +185,7 @@ export async function* runAgentStream(role, systemPrompt, userContent, signal = 
 
   if (role === AgentRole.ARCHITECT || role === AgentRole.MAPPING || role === AgentRole.INSPECTOR) {
     model = ModelConfig.REASONING;
-    temp = 0.1;
+    temp = 0.5; // Increased from 0.1 for richer descriptions
     maxTokens = 8192; // Itineraries need space — 8k ensures no truncation
   } else if (role === AgentRole.GUIDE) {
     model = ModelConfig.GENERAL;

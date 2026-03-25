@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "start": "node index.js",
+    "clean-start": "npx -y kill-port 5000 && node index.js",
     "dev": "node --watch index.js"
   },
   "dependencies": {

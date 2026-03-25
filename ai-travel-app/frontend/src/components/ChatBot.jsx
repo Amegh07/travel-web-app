@@ -68,6 +68,30 @@ const ChatHotelCard = ({ hotel, onSelect }) => (
     </div>
 );
 
+// Inline Event Card for chat
+const ChatEventCard = ({ event, symbol, onToggle }) => (
+    <div className="bg-white border border-[#E8E4DC] rounded-xl p-3 shadow-sm w-full">
+        <div className="flex items-start gap-3">
+            <div className="w-14 h-14 rounded-lg bg-[#F4F1EB] border border-[#E8E4DC] flex-shrink-0 flex items-center justify-center">
+               <Star size={18} className="text-[#B89A6A]" />
+            </div>
+            <div className="flex-1 min-w-0">
+                <div className="font-bold text-[#1C1916] text-xs truncate">{event.title}</div>
+                <div className="text-[10px] text-[#9C9690] truncate mt-0.5">{event.category || 'Experience'}</div>
+                <div className="flex items-center justify-between mt-1.5">
+                    <span className="text-xs font-bold text-[#1C1916]">{event.price || 'Check Info'}</span>
+                    <button
+                        onClick={() => onToggle && onToggle(event)}
+                        className="px-2 py-1 bg-[#1C1916] text-[#FDFCFA] text-[9px] uppercase tracking-wider font-bold rounded-lg hover:bg-[#2E3C3A] transition-colors"
+                    >
+                        Toggle
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+);
+
 // Inline Flight Card for chat
 const ChatFlightCard = ({ flight, symbol, onSelect }) => {
     const itinerary = flight.itineraries?.[0];
@@ -115,7 +139,7 @@ const ChatFlightCard = ({ flight, symbol, onSelect }) => {
     );
 };
 
-const ChatBot = ({ destination, aiItinerary, setAiItinerary, hotels = [], transport, journeySymbol = '₹', onSelectHotel, onSelectFlight }) => {
+const ChatBot = ({ destination, aiItinerary, setAiItinerary, currentDay, hotels = [], transport, events = [], journeySymbol = '₹', onSelectHotel, onSelectFlight, onToggleEvent }) => {
     const [isOpen, setIsOpen] = useState(false);
     const [messages, setMessages] = useState([{
         role: 'assistant',
@@ -172,6 +196,15 @@ const ChatBot = ({ destination, aiItinerary, setAiItinerary, hotels = [], transp
         const wantsDirect = /direct|non.?stop|nonstop/i.test(lower);
 
         return { maxPrice, wantsCheap, wantsDirect };
+    };
+
+    // Detect event query
+    const detectEventQuery = (prompt) => {
+        const lower = prompt.toLowerCase();
+        const eventKeywords = ['event', 'activity', 'thing to do', 'experience', 'tour', 'place to visit'];
+        if (!eventKeywords.some(k => lower.includes(k))) return null;
+        const wantsCheap = /cheap|afford|budget|free/i.test(lower);
+        return { wantsCheap };
     };
 
     const handleSend = async (overridePrompt) => {
@@ -256,14 +289,37 @@ const ChatBot = ({ destination, aiItinerary, setAiItinerary, hotels = [], transp
             return;
         }
 
-        // 3. Detect edit intent — if itinerary exists AND prompt sounds like a modification
+        // 3. Detect event query
+        const eventQuery = detectEventQuery(userPrompt);
+        if (eventQuery && events && events.length > 0) {
+            let filtered = [...events];
+            if (eventQuery.wantsCheap) filtered.sort((a, b) => parsePrice(a.price) - parsePrice(b.price));
+            const results = filtered.slice(0, 3);
+            if (results.length > 0) {
+                setMessages(prev => [...prev, {
+                    role: 'assistant',
+                    text: `Here are some great **local experiences** for you:`,
+                    type: 'event_suggestions',
+                    eventData: results
+                }]);
+            } else {
+                setMessages(prev => [...prev, {
+                    role: 'assistant',
+                    text: `I couldn't find specific events right now, but check the Local Experiences section above!`
+                }]);
+            }
+            setLoading(false);
+            return;
+        }
+
+        // 4. Detect edit intent — if itinerary exists AND prompt sounds like a modification
         const editKeywords = ['change day', 'swap', 'remove the', 'replace', 'add activity', 'update day', 'delete', 'move to day', 'fewer activities', 'make it cheaper'];
         const isEditRequest = aiItinerary && editKeywords.some(kw => userPrompt.toLowerCase().includes(kw));
 
         try {
             if (isEditRequest) {
                 setMessages(prev => [...prev, { role: 'assistant', text: '✦ Applying your changes...', type: 'system' }]);
-                const data = await modifyItinerary(userPrompt, aiItinerary);
+                const data = await modifyItinerary(userPrompt, aiItinerary, { currentDay });
                 if (data?.updatedItinerary) {
                     setAiItinerary(data.updatedItinerary);
                     setMessages(prev => [
@@ -278,7 +334,7 @@ const ChatBot = ({ destination, aiItinerary, setAiItinerary, hotels = [], transp
                 }
             } else {
                 // 4. General AI chat
-                const data = await chatWithAI(`Context: Planning trip to ${destination}. Question: ${userPrompt}`);
+                const data = await chatWithAI(`Context: Planning trip to ${destination}. Question: ${userPrompt}`, { currentDay });
                 setMessages(prev => [...prev, { role: 'assistant', text: data?.reply || "I'm having trouble connecting. Try again shortly." }]);
             }
         } catch {
@@ -384,6 +440,15 @@ const ChatBot = ({ destination, aiItinerary, setAiItinerary, hotels = [], transp
                                             <div className="mt-2 space-y-2">
                                                 {m.flightData.map((f, j) => (
                                                     <ChatFlightCard key={j} flight={f} symbol={journeySymbol} onSelect={onSelectFlight} />
+                                                ))}
+                                            </div>
+                                        )}
+
+                                        {/* Inline Event Cards */}
+                                        {m.type === 'event_suggestions' && m.eventData && (
+                                            <div className="mt-2 space-y-2">
+                                                {m.eventData.map((e, j) => (
+                                                    <ChatEventCard key={j} event={e} symbol={journeySymbol} onToggle={onToggleEvent} />
                                                 ))}
                                             </div>
                                         )}

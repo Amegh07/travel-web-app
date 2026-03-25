@@ -390,32 +390,44 @@ app.post('/api/itinerary', async (req, res) => {
 
         // 🧠 3. SYSTEM PROMPT ARCHITECTURE
         const currentDate = new Date().toISOString().split('T')[0];
-        let systemPrompt = `You are Travex's Elite Travel Architect, a world-class luxury travel planner and highly logical routing engine.
-        Today's date is ${currentDate}.
+        let systemPrompt = `You are **Travex's Elite Travel Architect** — a world-class luxury travel planner and a rigorously logical routing engine.
+        Your sole output must be a valid JSON object conforming exactly to the schema below.
 
-TRIP PARAMETERS:
-- Destination: ${destName}
-- Duration: ${daysCount} days (From ${arrivalDate} to ${departureDate})
-- Remaining Budget: ${currency} ${availableToSpend} (Target: ${currency} ${dailyAllowance}/day)
-- User Interests: ${interests?.join(', ') || 'Popular Highlights'}
-- Trip Purpose: ${tripPurpose?.toUpperCase() || 'HOLIDAY'}
+      ═══════════════════════════════════════════════════════════════════════════
+      🧭 TRIP CONTEXT
+      ═══════════════════════════════════════════════════════════════════════════
+      - Destination: ${destName}
+      - Duration: ${daysCount} days (From ${arrivalDate} to ${departureDate})
+      - Remaining Budget: ${currency} ${availableToSpend} (Target: ${currency} ${dailyAllowance}/day)
+      - User Interests: ${interests?.join(', ') || 'Popular Highlights'}
+      - Trip Purpose: ${tripPurpose?.toUpperCase() || 'HOLIDAY'}
+      - Selected Hotel (Basecamp): ${hotel?.name ? `${hotel.name}` : 'Unknown (Choose centrally)'}
+      - Hotel Coordinates: ${hotel?.location?.geo ? `${hotel.location.geo.lat}, ${hotel.location.geo.lng}` : 'N/A'}
 
-CRITICAL CONSTRAINTS:
-1. SPATIAL CLUSTERING: Group activities geographically by day. Day 1 should be tightly clustered in one neighborhood/region, Day 2 in another. Absolutely do not bounce the user across the map in a single day.
-2. PACING & ELEGANCE: Include 4-5 activities per day to give a rich, in-depth experience. The flow must be seamless. Include 'logistics' activities if transit between locations exceeds 20 minutes.
-3. PREMIUM CURATION: Write descriptions with the flair of a high-end travel magazine (e.g., Condé Nast Traveler). Sell the experience. Paint a vivid picture of the atmosphere, tastes, and sights.
-4. EXACTING BUDGET: The sum of 'cost_estimate' for all activities across all days MUST NOT exceed ${currency} ${availableToSpend}. Be realistic with pricing.
-5. TIME OF DAY AWARENESS: Be extremely logical with the time of day. Do NOT suggest a sunset viewpoint at noon. Do NOT suggest a bright morning hike at 8 PM. Match the activity perfectly to the biological and atmospheric reality of the time.
-6. OUTPUT FORMAT: You may think first, but your final output MUST end with valid JSON starting with '{' and ending with '}'. Inject tasteful emojis into themes and activities.
-7. PRECISION COORDINATES: "latitude" and "longitude" must be highly accurate decimal coordinates (e.g., 48.8566, 2.3522). This is critical for the interactive map widget.
-8. LOCALNESS METRIC: Assign a "localness_signal" from 0.0 (pure tourist trap) to 1.0 (deeply local hidden gem).
-9. TRANSIT INSTRUCTIONS: Provide highly in-depth, specific instructions on how to reach each destination from the previous one (e.g. "Take a 10-minute Uber", "Walk 15 minutes east down the promenade", "Take the Metro Line 4 to Cité").
-10. EMOJIS: Use ACTUAL emoji characters (like 🍷 or 🏛️). DO NOT use unicode escape sequences (like \\uD83E\\uDD41).
+      ═══════════════════════════════════════════════════════════════════════════
+      🔒 HARD CONSTRAINTS (VIOLATION = INVALID TRIP)
+      ═══════════════════════════════════════════════════════════════════════════
+      1. **Spatial Clustering** – Each day’s activities must reside in a single neighborhood or compact zone. Do not bounce the user across the map in a single day.
+      2. **Pacing & Elegance** – Include EXACTLY 4-5 activities per day. You must fill the entire day from morning to evening.
+      3. **Premium Description** – Every 'description' must be 3-4 lush, sensory-rich sentences minimum. Imagine writing for Condé Nast Traveler.
+      4. **Budget Exactitude** – Sum of all 'cost_estimate' fields MUST NOT exceed ${currency} ${availableToSpend}. Be realistic with pricing.
+      5. **Time-of-Day Authenticity** – Match the activity perfectly to the biological and atmospheric reality of the time.
+      6. **Output Format** – Your final output MUST end with valid JSON. Inject tasteful emojis into themes and activities.
+      7. **Precision Coordinates** – "latitude" and "longitude" must be highly accurate decimal coordinates (e.g., 48.8566, 2.3522). This is critical for the interactive map widget.
+      8. **Localness Metric** – Assign a "localness_signal" from 0.0 (pure tourist trap) to 1.0 (deeply local hidden gem).
+      9. **Transit Instructions** – Provide highly specific, realistic transit instructions (e.g., "Take a 10-minute Uber", "Walk 15 minutes east down the tree-lined promenade").
+      10. **Emojis** – Use ACTUAL emoji characters (like 🍷 or 🏛️). DO NOT use unicode escape sequences.
+      11. **Real Establishments Only** – NEVER use generic names like "Local Restaurant" or "Local Cafe". You MUST provide the exact, real-world name of a specific establishment that exists on Google Maps (e.g., "Pujol", "Cafe de Flore").
+      12. **Mandatory Basecamp** – You MUST incorporate the "Selected Hotel" above. Day 1 MUST include an explicit "Check-in at [Hotel Name]" activity. The geographic clustering of every day MUST revolve logically around this specific hotel's location.
 
-STRICT JSON FORMAT:
-{ "trip_name": "Must be catchy, luxurious, and descriptive", "daily_plan": [{ "day": 1, "date": "YYYY-MM-DD", "theme": "Aspirational theme for the day", "activities": [{ "time": "HH:MM", "activity": "Specific real place or activity name", "type": "food|sightseeing|logistics", "cost_estimate": Number, "description": "Highly descriptive, evocative, and professional text selling the atmospheric experience.", "reason_for_choice": "Compelling explanation of why this specific place is unmissable.", "transit_instruction": "In-depth instruction on how to get here from the previous spot (or the hotel).", "localness_signal": 0.5, "latitude": Number, "longitude": Number }] }] }
+      ═══════════════════════════════════════════════════════════════════════════
+      📐 REQUIRED JSON SCHEMA 
+      ═══════════════════════════════════════════════════════════════════════════
+        { "trip_name": "Must be catchy, luxurious, and descriptive", "daily_plan": [{ "day": 1, "date": "YYYY-MM-DD", "theme": "Aspirational theme for the day", "activities": [{ "time": "HH:MM", "activity": "Specific real place or activity name", "type": "food|sightseeing|logistics", "cost_estimate": Number, "description": "Lush, evocative, 3-4 sentence minimum description matching a luxury travel magazine.", "reason_for_choice": "Compelling explanation of why this specific place is unmissable.", "transit_instruction": "Specific transit instruction.", "localness_signal": 0.5, "latitude": Number, "longitude": Number }] }] }
 
-EXAMPLE FORMAT TO COPY STRICTLY:
+      ═══════════════════════════════════════════════════════════════════════════
+      📚 EXACT EXAMPLE FORMAT TO COPY STRICTLY (Notice the rich 4-activity pacing)
+      ═══════════════════════════════════════════════════════════════════════════
 {
   "trip_name": "Kerala: Backwaters & Heritage Elegance",
   "daily_plan": [
@@ -429,8 +441,8 @@ EXAMPLE FORMAT TO COPY STRICTLY:
           "activity": "Fort Kochi Heritage Walk 🚶",
           "type": "sightseeing",
           "cost_estimate": 0,
-          "description": "Stroll beneath ancient rain trees as you explore the cobbled streets of Fort Kochi, marveling at the iconic, cantilevered Chinese Fishing Nets silhouetted against the morning sky.",
-          "reason_for_choice": "An essential, evocative introduction to Kochi’s layered maritime history.",
+          "description": "Stroll beneath ancient rain trees as you explore the cobbled streets of Fort Kochi, marveling at the iconic, cantilevered Chinese Fishing Nets silhouetted against the morning sky. The salty breeze from the Arabian Sea wraps around the decaying but beautiful Portuguese architecture. Allow yourself to get lost in the narrow alleys where centuries of spice trade history still linger in the air.",
+          "reason_for_choice": "An essential, deeply atmospheric introduction to Kochi’s layered maritime history.",
           "transit_instruction": "Take a 20-minute Uber from your hotel directly to the waterfront promenade.",
           "localness_signal": 0.6,
           "latitude": 9.9680,
@@ -441,12 +453,36 @@ EXAMPLE FORMAT TO COPY STRICTLY:
           "activity": "Coastal Gastronomy at Kashi Art Cafe 🍤",
           "type": "food",
           "cost_estimate": 800,
-          "description": "Savor incredibly fresh, locally-sourced seafood dishes served in a lush, sun-dappled courtyard that doubles as a vibrant gallery for local artists.",
+          "description": "Savor incredibly fresh, locally-sourced seafood dishes served in a lush, sun-dappled courtyard that doubles as a vibrant gallery for local artists. The menu blends traditional Keralan spices with contemporary health-conscious cooking, making it an absolute oasis of calm. Rich filter coffee flows endlessly while acoustic music drifts through the tropical foliage surrounding the tables.",
           "reason_for_choice": "The beating creative heart of Fort Kochi, blending exquisite flavors with inspiring art.",
           "transit_instruction": "Enjoy a scenic 10-minute walk south past vintage Portuguese architecture.",
           "localness_signal": 0.8,
           "latitude": 9.9657,
           "longitude": 76.2415
+        },
+        {
+          "time": "15:00",
+          "activity": "Mattancherry Palace Museum 🏛️",
+          "type": "sightseeing",
+          "cost_estimate": 100,
+          "description": "Step into the beautifully preserved Dutch Palace to marvel at some of the finest Hindu temple murals in India. The rich history of the Kochi Rajas comes alive within these ancient wooden walls, offering a profoundly atmospheric afternoon retreat from the tropical heat.",
+          "reason_for_choice": "A critical piece of local history with breathtaking, centuries-old murals.",
+          "transit_instruction": "A leisurely 15-minute walk from the cafe through the spice district.",
+          "localness_signal": 0.5,
+          "latitude": 9.9582,
+          "longitude": 76.2594
+        },
+        {
+          "time": "19:00",
+          "activity": "Sunset Dinner at Oceanos Restaurant 🦀",
+          "type": "food",
+          "cost_estimate": 1200,
+          "description": "Conclude your day with a phenomenal fine-dining experience at this beloved local institution. Specializing in Syrian Christian and Kerala coastal cuisine, the candlelit ambiance is matched only by their incredible coconut milk curries and freshly caught tiger prawns. The warm, attentive service makes it an unforgettable culinary journey.",
+          "reason_for_choice": "Considered one of the absolute best, most authentic seafood kitchens in Kochi.",
+          "transit_instruction": "Take a quick 5-minute tuk-tuk ride back towards the northern shore.",
+          "localness_signal": 0.7,
+          "latitude": 9.9620,
+          "longitude": 76.2425
         }
       ]
     }
@@ -512,22 +548,34 @@ Follow this level of specificity, professional tone, and format exactly for ${de
         res.setHeader('Cache-Control', 'no-cache, no-transform');
         res.setHeader('Connection', 'keep-alive');
         res.setHeader('X-Accel-Buffering', 'no');
-        res.flushHeaders(); // FORCE headers immediately so browser keeps connection alive
+        res.flushHeaders(); 
 
         const controller = new AbortController();
-        req.on('close', () => {
-            console.log("   ⚠️ Client disconnected mid-stream. Aborting LLM.");
-            controller.abort();
+        res.on('close', () => {
+            if (isStreamingNow) {
+                console.log("   ⚠️ Client disconnected mid-stream. Aborting LLM.");
+                controller.abort();
+            }
         });
+        let isStreamingNow = false;
 
-        // We skip the inspector agent here to guarantee a fast TTFB (Time to First Byte).
-        // The Architect instructions are robust enough.
         console.log(`   🌊 Streaming Architect's plan to client...`);
 
         try {
+            // 🚨 THE FIX: Send immediate, real data chunks to keep the browser happy while Groq thinks
+            res.write(`data: ${JSON.stringify({ status: "Waking up Travel Architect..." })}\n\n`);
+            
+            // Start the Groq stream
+            isStreamingNow = true;
             const stream = runAgentStream(AgentRole.ARCHITECT, systemPrompt, userContent, controller.signal);
 
+            let isFirstChunk = true;
+
             for await (const chunk of stream) {
+                if (isFirstChunk) {
+                    isFirstChunk = false;
+                    res.write(`data: ${JSON.stringify({ status: "Generating Itinerary..." })}\n\n`);
+                }
                 // Send standard SSE format
                 res.write(`data: ${JSON.stringify({ chunk })}\n\n`);
             }
@@ -536,6 +584,13 @@ Follow this level of specificity, professional tone, and format exactly for ${de
             res.write(`data: [DONE]\n\n`);
             res.end();
         } catch (streamErr) {
+            // Suppress intended aborts
+            if (streamErr.constructor?.name === 'APIUserAbortError' || streamErr.name === 'AbortError') {
+                console.log("   🌊 Stream aborted by client [ARCHITECT].");
+                res.end();
+                return;
+            }
+
             console.error("Stream Generator Error:", streamErr);
             res.write(`data: ${JSON.stringify({ error: "AI temporarily unavailable" })}\n\n`);
             res.write(`data: [DONE]\n\n`);
@@ -776,7 +831,7 @@ app.post('/api/search-all', async (req, res) => {
 // ==================================================
 app.post('/api/modify-itinerary', async (req, res) => {
     try {
-        const { prompt, currentItinerary } = req.body;
+        const { prompt, currentItinerary, context } = req.body;
 
         if (!prompt || !currentItinerary) {
             return res.status(400).json({ error: 'Missing prompt or currentItinerary' });
@@ -786,14 +841,16 @@ app.post('/api/modify-itinerary', async (req, res) => {
         console.log(`   📝 User request: "${prompt}"`);
 
         const systemPrompt = `You are Travex's Elite Itinerary Editor. The user wants to modify their existing travel itinerary.
+${context?.currentDay ? `\n📍 CURRENT VIEW: The user is currently looking at Day ${context.currentDay}. Most modifications should likely apply to this day unless stated otherwise.` : ''}
 
 YOUR RULES:
-1. Apply ONLY the change the user requested. Do not redesign the entire trip.
+1. Apply ONLY the change the user requested. If they are looking at Day ${context?.currentDay || 'X'}, focus the change there.
 2. Preserve all other days and activities exactly as-is.
 3. Keep the same JSON structure as the input — do not add or remove fields.
 4. Maintain realistic cost estimates in the same currency.
 5. Return ONLY the updated itinerary JSON — no preamble, no explanation, no markdown.
 6. Keep all emojis, localness_signal values, latitude/longitude, and transit instructions.
+7. CRITICAL: Avoid duplicates. Do not suggest an activity that already exists on another day of the trip.
 
 OUTPUT: Return the full updated itinerary JSON starting with { and ending with }.`;
 
@@ -826,8 +883,10 @@ app.post('/api/mapping', async (req, res) => { res.json({ logistics: [] }); });
 app.post('/api/cfo', async (req, res) => { res.json({ status: "safe" }); });
 app.post('/api/chat', async (req, res) => {
     try {
+        const { message, context } = req.body;
         const systemPrompt = `You are Travex, an AI Travel Concierge.
 You have the ability to render interactive UI components directly into the chat window (Generative UI).
+${context?.currentDay ? `\n📍 DAY CONTEXT: The user is currently viewing the details for Day ${context.currentDay}. Please keep this in mind for context. If they ask about "today" or "this day", they mean Day ${context.currentDay}.` : ''}
 
 When the user asks you to find a flight, DO NOT reply with a plain text list of flights. 
 Instead, return a JSON payload with a "type" of "flight_component" and the flight details in "data".
@@ -850,9 +909,17 @@ Return strictly this JSON format:
 
 If they ask something else, just return normal JSON: { "reply": "Your helpful text response" }`;
 
-        const result = await runAgent(AgentRole.ROUTER, systemPrompt, `User: ${req.body.message}`);
-        res.json(extractJSON(result));
-    } catch { res.json({ reply: "I'm busy." }); }
+        const result = await runAgent(AgentRole.ROUTER, systemPrompt, `User: ${message}`);
+        try {
+            res.json(extractJSON(result));
+        } catch (jsonErr) {
+            console.warn("⚠️ AI Chat Format Issue, falling back to raw text:", jsonErr.message);
+            res.json({ reply: result.replace(/<\/?[^>]+(>|$)/g, "").trim() });
+        }
+    } catch (error) {
+        console.error("❌ /api/chat Error:", error.message);
+        res.json({ reply: "I'm busy. (AI Connection Error)" });
+    }
 });
 
 // --- START SERVER ---

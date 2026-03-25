@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
-import { MapPin, Navigation, Camera, Utensils, Moon, Sun, Map, Info, X, ExternalLink } from 'lucide-react';
+import { MapPin, Navigation, Camera, Utensils, Moon, Sun, Map, Info, X, ExternalLink, ChevronRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useNavigate } from 'react-router-dom';
 
 // ── Activity type icon — warm palette
 const ActivityIcon = ({ type }) => {
@@ -31,10 +32,9 @@ const buildDayMapsUrl = (activities) => {
             return !t.includes('logistics');
         })
         .map(act => {
-            if (act.latitude && act.longitude) {
-                return `${act.latitude},${act.longitude}`;
-            }
-            return encodeURIComponent(act.activity);
+            // Force search by the specific business name + trip location context
+            // AI coordinates are too generic and will drop pins on roads/runways instead of front doors
+            return encodeURIComponent(`${act.activity}, ${activities._contextLocation || 'City'}`);
         });
 
     if (stops.length === 0) return null;
@@ -55,6 +55,7 @@ const buildDayMapsUrl = (activities) => {
 };
 
 const ItineraryTimeline = ({ plan, currency = 'INR' }) => {
+    const navigate = useNavigate();
     const currencySymbol = currency === 'USD' ? '$' : currency === 'EUR' ? '€' : '₹';
     const [itinerary, setItinerary] = useState(plan);
     const [selectedFoodAct, setSelectedFoodAct] = useState(null);
@@ -93,9 +94,12 @@ const ItineraryTimeline = ({ plan, currency = 'INR' }) => {
 
                                 {/* Day header */}
                                 <div className="flex items-start justify-between mb-5 gap-4">
-                                    <div>
-                                        <h3 className="serif-text text-2xl font-light text-[#1C1916] tracking-tight flex items-center gap-2">
-                                            Day {day.day}
+                                    <div 
+                                        onClick={() => navigate(`/itinerary/${encodeURIComponent(itinerary.trip_name || 'Trip')}/day/${day.day}`)}
+                                        className="cursor-pointer group flex-1"
+                                    >
+                                        <h3 className="serif-text text-2xl font-light text-[#1C1916] tracking-tight flex items-center gap-1 group-hover:text-[#B89A6A] transition-colors">
+                                            Day {day.day} <ChevronRight size={20} className="translate-y-[1px] opacity-40 group-hover:opacity-100 group-hover:translate-x-1 transition-all" />
                                         </h3>
                                         <div className="flex items-center gap-2 text-[10px] tracking-widest uppercase text-[#9C9690] mt-1.5 font-medium">
                                             <CalendarSVG />
@@ -105,7 +109,7 @@ const ItineraryTimeline = ({ plan, currency = 'INR' }) => {
                                         </div>
                                     </div>
 
-                                    {/* ✅ FIX: Opens Google Maps in new tab with real coordinates */}
+                                    {/* Google Maps route for the day */}
                                     <button
                                         onClick={() => dayMapsUrl && window.open(dayMapsUrl, '_blank')}
                                         disabled={!dayMapsUrl}
@@ -121,8 +125,9 @@ const ItineraryTimeline = ({ plan, currency = 'INR' }) => {
                                         {day.activities.map((act, actIndex) => {
                                             const isTransit = (act.type || '').toLowerCase().includes('logistics') || (act.activity || '').toLowerCase().includes('transit');
 
-                                            // ✅ FIX: Always search by name — Google finds exact businesses better than AI coords
-                                            const actMapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(act.activity)}`;
+                                            // ✅ FIX: Force Google Maps Business Search. Raw AI coordinates drop pins unreliably on runways/backroads.
+                                            // Appending the trip destination guarantees Google finds the exact business profile, photos, and front door.
+                                            const actMapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(`${act.activity}, ${itinerary.trip_name || ''}`)}`;
 
                                             return (
                                                 <motion.div
