@@ -214,6 +214,18 @@ const ItineraryTimeline = ({ plan, currency = 'INR' }) => {
                                                                     <Info size={11} />
                                                                 </button>
                                                             )}
+                                                            {(act.type === 'sightseeing' || act.type === 'event') && (
+                                                                <a
+                                                                    href={`https://www.getyourguide.com/s?q=${encodeURIComponent(act.activity)}+${encodeURIComponent(plan?.trip_name || '')}`}
+                                                                    target="_blank"
+                                                                    rel="noopener noreferrer"
+                                                                    onClick={(e) => e.stopPropagation()}
+                                                                    className="inline-flex items-center gap-1 px-2 py-0.5 bg-[#2E3C3A]/10 text-[#2E3C3A] hover:bg-[#2E3C3A]/20 border border-[#2E3C3A]/30 rounded-lg transition-colors"
+                                                                >
+                                                                    <span className="text-[9px] font-medium uppercase tracking-widest">Find Tickets</span>
+                                                                    <ExternalLink size={11} />
+                                                                </a>
+                                                            )}
                                                         </div>
 
                                                         {/* Transit instruction */}
@@ -250,65 +262,52 @@ const ItineraryTimeline = ({ plan, currency = 'INR' }) => {
 
             {/* FOOD PLACES MODAL */}
             <AnimatePresence>
-                {selectedFoodAct && (
-                    <motion.div
-                        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                        className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#1C1916]/40 backdrop-blur-sm"
-                        onClick={() => setSelectedFoodAct(null)}
-                    >
+                {selectedFoodAct && (() => {
+                    const mapsUrl = selectedFoodAct.latitude && selectedFoodAct.longitude
+                        ? `https://www.google.com/maps/search/restaurants/@${selectedFoodAct.latitude},${selectedFoodAct.longitude},15z`
+                        : `https://www.google.com/maps/search/restaurants+near+${encodeURIComponent(selectedFoodAct.activity)}`;
+                    return (
                         <motion.div
-                            initial={{ y: 20, scale: 0.95 }} animate={{ y: 0, scale: 1 }} exit={{ y: 20, scale: 0.95 }}
-                            onClick={e => e.stopPropagation()}
-                            className="bg-[#FDFCFA] rounded-3xl w-full max-w-md shadow-2xl overflow-hidden border border-[#E8E4DC]"
+                            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#1C1916]/40 backdrop-blur-sm"
+                            onClick={() => setSelectedFoodAct(null)}
                         >
-                            <div className="p-6 border-b border-[#E8E4DC] relative">
-                                <button onClick={() => setSelectedFoodAct(null)} className="absolute top-6 right-6 p-2 rounded-full hover:bg-[#F4F1EB] text-[#9C9690] transition-colors">
-                                    <X size={18} />
-                                </button>
-                                <div className="flex items-center gap-3 mb-2">
-                                    <div className="w-10 h-10 rounded-full bg-[#B89A6A]/10 flex items-center justify-center text-[#B89A6A]">
-                                        <Utensils size={18} />
-                                    </div>
-                                    <div>
-                                        <h3 className="serif-text text-xl text-[#1C1916] font-light">Nearby Dining</h3>
-                                        <p className="text-xs text-[#9C9690]">Recommended options near this location</p>
+                            <motion.div
+                                initial={{ y: 20, scale: 0.95 }} animate={{ y: 0, scale: 1 }} exit={{ y: 20, scale: 0.95 }}
+                                onClick={e => e.stopPropagation()}
+                                className="bg-[#FDFCFA] rounded-3xl w-full max-w-md shadow-2xl overflow-hidden border border-[#E8E4DC]"
+                            >
+                                <div className="p-6 border-b border-[#E8E4DC] relative">
+                                    <button onClick={() => setSelectedFoodAct(null)} className="absolute top-6 right-6 p-2 rounded-full hover:bg-[#F4F1EB] text-[#9C9690] transition-colors">
+                                        <X size={18} />
+                                    </button>
+                                    <div className="flex items-center gap-3 mb-2">
+                                        <div className="w-10 h-10 rounded-full bg-[#B89A6A]/10 flex items-center justify-center text-[#B89A6A]">
+                                            <Utensils size={18} />
+                                        </div>
+                                        <div>
+                                            <h3 className="serif-text text-xl text-[#1C1916] font-light">Nearby Dining</h3>
+                                            <p className="text-xs text-[#9C9690]">Real restaurants near this location</p>
+                                        </div>
                                     </div>
                                 </div>
-                            </div>
-                            <div className="p-6 bg-[#F4F1EB]">
-                                <p className="text-sm text-[#5A554A] mb-4">
-                                    Based on the itinerary for <span className="font-semibold text-[#1C1916]">"{selectedFoodAct.activity}"</span>, here are top-rated local spots in the immediate vicinity:
-                                </p>
-                                <div className="space-y-3">
-                                    {/* Open Google Maps nearby search using the activity's real coordinates */}
-                                    {[
-                                        { name: 'Local Authentic Kitchen', rating: '4.8', type: 'Traditional', price: '₹₹' },
-                                        { name: 'Bistro & Cafe', rating: '4.5', type: 'Casual Dining', price: '₹' },
-                                        { name: 'Fine Dining Sunset View', rating: '4.9', type: 'Premium', price: '₹₹₹' },
-                                    ].map((place, i) => {
-                                        const mapsQuery = selectedFoodAct.latitude && selectedFoodAct.longitude
-                                            ? `https://www.google.com/maps/search/restaurants/@${selectedFoodAct.latitude},${selectedFoodAct.longitude},15z`
-                                            : `https://www.google.com/maps/search/restaurants+near+${encodeURIComponent(selectedFoodAct.activity)}`;
-                                        return (
-                                            <div key={i} className="p-4 bg-[#FDFCFA] rounded-2xl border border-[#E8E4DC] flex justify-between items-center group hover:border-[#B89A6A]/40 transition-colors">
-                                                <div>
-                                                    <h4 className="font-medium text-[#1C1916] text-sm">{place.name}</h4>
-                                                    <p className="text-xs text-[#9C9690] mt-0.5">{place.rating} ★ · {place.type} · {place.price}</p>
-                                                </div>
-                                                <button
-                                                    onClick={() => window.open(mapsQuery, '_blank')}
-                                                    className="text-[10px] text-[#B89A6A] font-medium tracking-widest uppercase opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1"
-                                                >
-                                                    Map <ExternalLink size={10} />
-                                                </button>
-                                            </div>
-                                        );
-                                    })}
+                                <div className="p-6 bg-[#F4F1EB]">
+                                    <p className="text-sm text-[#5A554A] mb-5">
+                                        Find real restaurants near <span className="font-semibold text-[#1C1916]">"{selectedFoodAct.activity}"</span> on Google Maps:
+                                    </p>
+                                    <button
+                                        onClick={() => window.open(mapsUrl, '_blank')}
+                                        className="w-full py-3.5 bg-[#1C1916] hover:bg-[#2E3C3A] text-[#FDFCFA] rounded-2xl text-sm font-semibold tracking-wide flex items-center justify-center gap-2 transition-colors"
+                                    >
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="3 11 22 2 13 21 11 13 3 11" /></svg>
+                                        Open Restaurants in Maps
+                                    </button>
+                                    <p className="text-center text-[10px] text-[#9C9690] mt-3 tracking-wide">Opens Google Maps · Filtered to restaurants nearby</p>
                                 </div>
-                            </div>
+                            </motion.div>
                         </motion.div>
-                    </motion.div>
-                )}
+                    );
+                })()}
             </AnimatePresence>
         </div>
     );

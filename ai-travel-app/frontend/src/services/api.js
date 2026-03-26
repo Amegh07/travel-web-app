@@ -44,18 +44,33 @@ export const searchCities = async (keyword) => {
 };
 
 // 2. ChatBot (The Concierge)
-export const chatWithAI = async (message, context = {}) => {
+export const chatWithAI = async (message, context = {}, history = []) => {
     try {
         const res = await fetch(`${API_BASE}/api/chat`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message, context })
+            body: JSON.stringify({ message, context, history })
         });
         if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
         return await res.json();
     } catch (error) {
         console.error("Chat API Error:", error);
         return null; 
+    }
+};
+
+export const analyzeIntent = async (message) => {
+    try {
+        const res = await fetch(`${API_BASE}/api/intent`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message })
+        });
+        if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+        return await res.json();
+    } catch (error) {
+        console.error("Intent API Error:", error);
+        return { intent: "general_chat" };
     }
 };
 
@@ -136,7 +151,7 @@ export const searchAll = async (searchData) => {
 
 // --- 🧠 AI ARCHITECT ENDPOINTS ---
 
-export const fetchItineraryStream = async (payload, onChunk, onError, signal) => {
+export const fetchItineraryStream = async (payload, onChunk, onError, onRetry, signal) => {
     try {
         const res = await fetch(`${API_BASE}/api/itinerary`, {
             method: 'POST',
@@ -185,15 +200,19 @@ export const fetchItineraryStream = async (payload, onChunk, onError, signal) =>
                     if (parsed.error) {
                         throw new Error(parsed.error); // Break the stream and trigger Mock protocol
                     }
+                    if (parsed.retry && onRetry) {
+                        onRetry();
+                        continue;
+                    }
                     if (parsed.chunk && parsed.chunk.trim()) { // Added empty string protection
                         onChunk(parsed.chunk);
                     }
                 }
             }
         }
-    } catch (e) {
-        console.warn("AI Stream Interrupted:", e.message);
-        if (onError) onError(null); // signal failure — no mock data
+    } catch (err) {
+        if (err.name === 'AbortError') return;
+        onError(err);
     }
 };
 

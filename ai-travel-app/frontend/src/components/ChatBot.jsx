@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { X, Send, MessageSquare, Wand2, RotateCcw, Plane, Star } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { chatWithAI, modifyItinerary } from '../services/api';
+import { chatWithAI, modifyItinerary, analyzeIntent } from '../services/api';
 
 // Render structured AI text: supports **bold**, bullet points, icons
 const FormattedMessage = ({ text }) => {
@@ -69,7 +69,7 @@ const ChatHotelCard = ({ hotel, onSelect }) => (
 );
 
 // Inline Event Card for chat
-const ChatEventCard = ({ event, symbol, onToggle }) => (
+const ChatEventCard = ({ event, onToggle }) => (
     <div className="bg-white border border-[#E8E4DC] rounded-xl p-3 shadow-sm w-full">
         <div className="flex items-start gap-3">
             <div className="w-14 h-14 rounded-lg bg-[#F4F1EB] border border-[#E8E4DC] flex-shrink-0 flex items-center justify-center">
@@ -151,13 +151,17 @@ const ChatBot = ({ destination, aiItinerary, setAiItinerary, currentDay, hotels 
     const [unread, setUnread] = useState(0);
     const scrollRef = useRef(null);
 
-    useEffect(() => {
-        scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }, [messages]);
+    const isOpenRef = useRef(isOpen);
+    useEffect(() => { isOpenRef.current = isOpen; }, [isOpen]);
 
-    useEffect(() => {
-        if (!isOpen && messages.length > 1) setUnread(prev => prev + 1);
-    }, [messages]);
+    // Helper: add an assistant message and track unread if chat is closed
+    const addAssistantMessage = (msg) => {
+        setMessages(prev => {
+            const next = [...prev, msg];
+            if (!isOpenRef.current) setUnread(u => u + 1);
+            return next;
+        });
+    };
 
     const handleOpen = () => { setIsOpen(true); setUnread(0); };
 
@@ -168,45 +172,6 @@ const ChatBot = ({ destination, aiItinerary, setAiItinerary, currentDay, hotels 
         return parseFloat(num) || 0;
     };
 
-    // Detect hotel query and extract budget
-    const detectHotelQuery = (prompt) => {
-        const lower = prompt.toLowerCase();
-        const hotelKeywords = ['hotel', 'stay', 'accommodation', 'lodge', 'room'];
-        if (!hotelKeywords.some(k => lower.includes(k))) return null;
-
-        // Extract price threshold: "under 5000", "below 3000", "less than 8000", "cheaper than 10000"
-        const priceMatch = lower.match(/(?:under|below|less\s+than|cheaper\s+than|within|max|budget)\s*(?:₹|\$|€|rs\.?|inr|usd)?\s*(\d+)/i);
-        const maxPrice = priceMatch ? parseInt(priceMatch[1]) : null;
-
-        // Also detect "cheapest" or "affordable"
-        const wantsCheap = /cheap|afford|budget|low.?cost|bargain/i.test(lower);
-
-        return { maxPrice, wantsCheap };
-    };
-
-    // Detect flight query
-    const detectFlightQuery = (prompt) => {
-        const lower = prompt.toLowerCase();
-        const flightKeywords = ['flight', 'fly', 'airline', 'plane', 'cheapest flight', 'direct flight'];
-        if (!flightKeywords.some(k => lower.includes(k))) return null;
-
-        const priceMatch = lower.match(/(?:under|below|less\s+than|cheaper\s+than|within|max)\s*(?:₹|\$|€|rs\.?|inr|usd)?\s*(\d+)/i);
-        const maxPrice = priceMatch ? parseInt(priceMatch[1]) : null;
-        const wantsCheap = /cheap|afford|budget|low.?cost|bargain/i.test(lower);
-        const wantsDirect = /direct|non.?stop|nonstop/i.test(lower);
-
-        return { maxPrice, wantsCheap, wantsDirect };
-    };
-
-    // Detect event query
-    const detectEventQuery = (prompt) => {
-        const lower = prompt.toLowerCase();
-        const eventKeywords = ['event', 'activity', 'thing to do', 'experience', 'tour', 'place to visit'];
-        if (!eventKeywords.some(k => lower.includes(k))) return null;
-        const wantsCheap = /cheap|afford|budget|free/i.test(lower);
-        return { wantsCheap };
-    };
-
     const handleSend = async (overridePrompt) => {
         const userPrompt = overridePrompt || input.trim();
         if (!userPrompt) return;
@@ -215,113 +180,117 @@ const ChatBot = ({ destination, aiItinerary, setAiItinerary, currentDay, hotels 
         setInput('');
         setLoading(true);
 
-        // 1. Check for hotel query
-        const hotelQuery = detectHotelQuery(userPrompt);
-        if (hotelQuery && hotels.length > 0) {
-            let filtered = [...hotels];
+        addAssistantMessage({ role: 'assistant', text: '✦ Thinking...', type: 'system' });
+            
+        let intentRes;
+        try {
+            intentRes = await analyzeIntent(userPrompt);
+        } catch {
+            intentRes = { intent: 'general_chat', parameters: {} };
+        }
+        
+        const { intent, parameters } = intentRes;
 
-            if (hotelQuery.maxPrice) {
-                filtered = filtered.filter(h => parsePrice(h.price) <= hotelQuery.maxPrice);
+        // Remove thinking message
+        setMessages(prev => prev.filter(m => m.text !== '✦ Thinking...'));
+
+        // 1. HOTEL SEARCH
+        if (intent === 'search_hotel' && hotels.length > 0) {
+            let filtered = [...hotels];
+            if (parameters.maxPrice) {
+                filtered = filtered.filter(h => parsePrice(h.price) <= parameters.maxPrice);
             }
-            if (hotelQuery.wantsCheap) {
+            if (parameters.wantsCheap) {
                 filtered.sort((a, b) => parsePrice(a.price) - parsePrice(b.price));
             }
 
             const results = filtered.slice(0, 4);
 
             if (results.length > 0) {
-                setMessages(prev => [...prev, {
+                addAssistantMessage({
                     role: 'assistant',
-                    text: hotelQuery.maxPrice
-                        ? `Here are **${results.length} hotels** under ${journeySymbol}${hotelQuery.maxPrice}:`
+                    text: parameters.maxPrice
+                        ? `Here are **${results.length} hotels** under ${journeySymbol}${parameters.maxPrice}:`
                         : `Here are the **best hotel options** for your trip:`,
                     type: 'hotel_suggestions',
                     hotelData: results
-                }]);
+                });
             } else {
-                setMessages(prev => [...prev, {
+                addAssistantMessage({
                     role: 'assistant',
-                    text: hotelQuery.maxPrice
-                        ? `No hotels found under ${journeySymbol}${hotelQuery.maxPrice}. Try a higher budget or check the hotels section above.`
+                    text: parameters.maxPrice
+                        ? `No hotels found under ${journeySymbol}${parameters.maxPrice}. Try a higher budget or check the hotels section above.`
                         : `I couldn't find matching hotels. Check the hotels section above for all options.`
-                }]);
+                });
             }
             setLoading(false);
             return;
         }
 
-        // 2. Check for flight query
-        const flightQuery = detectFlightQuery(userPrompt);
-        const flightResults = transport?.results || [];
-        if (flightQuery && flightResults.length > 0) {
-            let filtered = [...flightResults];
-
-            if (flightQuery.maxPrice) {
-                filtered = filtered.filter(f => parseFloat(f.price?.total || 0) <= flightQuery.maxPrice);
+        // 2. FLIGHT SEARCH
+        if (intent === 'search_flight' && transport?.results?.length > 0) {
+            let filtered = [...transport.results];
+            if (parameters.maxPrice) {
+                filtered = filtered.filter(f => parseFloat(f.price?.total || 0) <= parameters.maxPrice);
             }
-            if (flightQuery.wantsDirect) {
+            if (parameters.wantsDirect) {
                 filtered = filtered.filter(f => (f.itineraries?.[0]?.segments?.length || 1) === 1);
             }
-            if (flightQuery.wantsCheap) {
+            if (parameters.wantsCheap) {
                 filtered.sort((a, b) => parseFloat(a.price?.total || 0) - parseFloat(b.price?.total || 0));
             }
 
             const results = filtered.slice(0, 3);
-
             if (results.length > 0) {
-                setMessages(prev => [...prev, {
+                addAssistantMessage({
                     role: 'assistant',
-                    text: flightQuery.maxPrice
-                        ? `Found **${results.length} flights** under ${journeySymbol}${flightQuery.maxPrice}:`
-                        : flightQuery.wantsDirect
+                    text: parameters.maxPrice
+                        ? `Found **${results.length} flights** under ${journeySymbol}${parameters.maxPrice}:`
+                        : parameters.wantsDirect
                             ? `Here are the **direct flights** available:`
                             : `Here are the **best flight options**:`,
                     type: 'flight_suggestions',
                     flightData: results
-                }]);
+                });
             } else {
-                setMessages(prev => [...prev, {
-                    role: 'assistant',
-                    text: `No flights match that criteria. Check the flights section above for all options.`
-                }]);
+                addAssistantMessage({ role: 'assistant', text: `No flights match that criteria. Check the flights section above for all options.` });
             }
             setLoading(false);
             return;
         }
 
-        // 3. Detect event query
-        const eventQuery = detectEventQuery(userPrompt);
-        if (eventQuery && events && events.length > 0) {
+        // 3. EVENT SEARCH
+        if (intent === 'search_event' && events?.length > 0) {
             let filtered = [...events];
-            if (eventQuery.wantsCheap) filtered.sort((a, b) => parsePrice(a.price) - parsePrice(b.price));
+            if (parameters.wantsCheap) filtered.sort((a, b) => parsePrice(a.price) - parsePrice(b.price));
             const results = filtered.slice(0, 3);
             if (results.length > 0) {
-                setMessages(prev => [...prev, {
+                addAssistantMessage({
                     role: 'assistant',
                     text: `Here are some great **local experiences** for you:`,
                     type: 'event_suggestions',
                     eventData: results
-                }]);
+                });
             } else {
-                setMessages(prev => [...prev, {
-                    role: 'assistant',
-                    text: `I couldn't find specific events right now, but check the Local Experiences section above!`
-                }]);
+                addAssistantMessage({ role: 'assistant', text: `I couldn't find specific events right now, but check the Local Experiences section above!` });
             }
             setLoading(false);
             return;
         }
 
-        // 4. Detect edit intent — if itinerary exists AND prompt sounds like a modification
-        const editKeywords = ['change day', 'swap', 'remove the', 'replace', 'add activity', 'update day', 'delete', 'move to day', 'fewer activities', 'make it cheaper'];
-        const isEditRequest = aiItinerary && editKeywords.some(kw => userPrompt.toLowerCase().includes(kw));
-
-        try {
-            if (isEditRequest) {
-                setMessages(prev => [...prev, { role: 'assistant', text: '✦ Applying your changes...', type: 'system' }]);
+        // 4. EDIT ITINERARY
+        if (intent === 'edit_itinerary') {
+            if (!aiItinerary) {
+                addAssistantMessage({ role: 'assistant', text: 'You need to generate an itinerary first before I can edit it!' });
+                setLoading(false);
+                return;
+            }
+            
+            addAssistantMessage({ role: 'assistant', text: '✦ Applying your changes...', type: 'system' });
+            try {
                 const data = await modifyItinerary(userPrompt, aiItinerary, { currentDay });
                 if (data?.updatedItinerary) {
-                    setAiItinerary(data.updatedItinerary);
+                    setAiItinerary({ ...data.updatedItinerary });
                     setMessages(prev => [
                         ...prev.filter(m => m.text !== '✦ Applying your changes...'),
                         { role: 'assistant', text: data.message || `**Itinerary updated!** ✓\n\nYour plan has been adjusted based on your request. Scroll up to see the changes in the timeline.`, type: 'success' }
@@ -332,13 +301,22 @@ const ChatBot = ({ destination, aiItinerary, setAiItinerary, currentDay, hotels 
                         { role: 'assistant', text: 'I ran into an issue updating the itinerary. Please try again or rephrase your request.' }
                     ]);
                 }
-            } else {
-                // 4. General AI chat
-                const data = await chatWithAI(`Context: Planning trip to ${destination}. Question: ${userPrompt}`, { currentDay });
-                setMessages(prev => [...prev, { role: 'assistant', text: data?.reply || "I'm having trouble connecting. Try again shortly." }]);
+            } catch {
+                setMessages(prev => [
+                    ...prev.filter(m => m.text !== '✦ Applying your changes...'),
+                    { role: 'assistant', text: 'Something went wrong while modifying the itinerary.' }
+                ]);
             }
+            setLoading(false);
+            return;
+        }
+
+        // 5. GENERAL CHAT (Fallback)
+        try {
+            const data = await chatWithAI(`Context: Planning trip to ${destination}. Question: ${userPrompt}`, { currentDay }, messages);
+            addAssistantMessage({ role: 'assistant', text: data?.reply || "I'm having trouble connecting. Try again shortly." });
         } catch {
-            setMessages(prev => [...prev, { role: 'assistant', text: 'Something went wrong. My systems are busy.' }]);
+            addAssistantMessage({ role: 'assistant', text: 'Something went wrong. My systems are busy.' });
         }
 
         setLoading(false);

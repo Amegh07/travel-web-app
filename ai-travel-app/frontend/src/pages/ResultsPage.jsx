@@ -65,13 +65,16 @@ const CheckoutBar = ({ flight, hotel, currencySymbol, nights, destName, originNa
                 </div>
                 <div className="flex flex-col sm:flex-row items-stretch gap-3 w-full md:w-auto">
                     <button
-                        onClick={() => window.open(`https://www.google.com/flights?hl=en#flt=${originName}.${destName}.${departDate}`, '_blank')}
+                        onClick={() => {
+                            const airline = flight.validatingAirlineCodes?.[0] || '';
+                            window.open(`https://www.google.com/search?btnI=1&q=book+flight+${airline}+official+website`, '_blank');
+                        }}
                         className="flex-1 md:flex-none border border-[#B89A6A] hover:bg-[#B89A6A]/10 text-[#B89A6A] px-7 py-3.5 rounded-2xl text-xs font-bold uppercase tracking-widest transition-all flex items-center justify-center gap-2 group"
                     >
                         <Plane size={14} className="group-hover:translate-x-0.5 transition-transform" /> Book Flight
                     </button>
                     <button
-                        onClick={() => window.open(`https://www.google.com/search?q=book+${encodeURIComponent(hotel.name)}`, '_blank')}
+                        onClick={() => window.open(`https://www.google.com/search?btnI=1&q=${encodeURIComponent(hotel.name)}+official+website+book+room`, '_blank')}
                         className="flex-1 md:flex-none bg-[#B89A6A] hover:bg-[#A8876A] text-[#1C1916] px-7 py-3.5 rounded-2xl text-xs font-bold uppercase tracking-widest transition-all flex items-center justify-center gap-2 group shadow-[0_4px_16px_rgba(184,154,106,0.3)]"
                     >
                         <Hotel size={14} className="group-hover:scale-110 transition-transform" /> Book Hotel
@@ -132,7 +135,7 @@ const FlightCard = ({ flight, isSelected, onSelect, showBook = false }) => {
                     <div className="serif-text text-3xl font-light text-[#1C1916] tracking-tight">{(flight.price?.currency === 'INR' ? '₹' : flight.price?.currency === 'EUR' ? '€' : flight.price?.currency === 'GBP' ? '£' : '$')} {parseFloat(flight.price?.total || 0).toFixed(2)}</div>
                     {showBook && (
                         <button
-                            onClick={(e) => { e.stopPropagation(); window.open(`https://www.google.com/search?q=book+flight+${airlineCode}`, '_blank'); }}
+                            onClick={(e) => { e.stopPropagation(); window.open(`https://www.google.com/search?btnI=1&q=book+flight+${airlineCode}+official+website`, '_blank'); }}
                             className="mt-3 text-[10px] bg-[#B89A6A] hover:bg-[#A8876A] text-[#FDFCFA] font-medium px-4 py-2 rounded-xl flex items-center gap-2 ml-auto transition-all tracking-widest uppercase"
                         >
                             <Globe size={14} /> Book Now
@@ -239,7 +242,7 @@ const HotelCard = ({ hotel, isSelected, onSelect, nights, showBook = false }) =>
                     </div>
                     {showBook && (
                         <button
-                            onClick={(e) => { e.stopPropagation(); window.open(`https://www.google.com/search?q=book+${hotel.name}`, '_blank'); }}
+                            onClick={(e) => { e.stopPropagation(); window.open(`https://www.google.com/search?btnI=1&q=${encodeURIComponent(hotel.name)}+official+website+book+room`, '_blank'); }}
                             className="text-[10px] whitespace-nowrap bg-[#F4F1EB] hover:bg-[#E8E4DC] border border-[#E8E4DC] text-[#1C1916] font-medium px-4 py-2 rounded-xl transition-all tracking-widest uppercase"
                         >
                             Book Stay
@@ -732,7 +735,15 @@ const ResultsPage = ({ searchData, onBack }) => {
                 const p = tryParsePartialJSON(accumulated);
                 if (p?.daily_plan) setAiItinerary(p);
             },
-            () => setAiError("AI unavailable. Please check your API keys or try again shortly."),
+            (err) => {
+                console.error("❌ AI Stream Error:", err);
+                setAiError("AI unavailable. Please check your API keys or try again shortly.");
+            },
+            () => {
+                console.log("⚠️ Backend triggered retry (JSON validation failed). Resetting stream buffer.");
+                accumulated = "";
+                setAiItinerary(null);
+            },
             controller.signal
         ).then(() => {
             if (accumulated.trim()) {
@@ -747,12 +758,13 @@ const ResultsPage = ({ searchData, onBack }) => {
                     if (f?.daily_plan) setAiItinerary(f); 
                 }
                 catch (e) {
-                    console.warn("Final JSON parse skipped.", e);
+                    console.error(`❌ Final JSON parse failed (buffer: ${accumulated.length} chars). Error:`, e);
+                    console.debug("🔍 Raw accumulated buffer (last 300 chars):", accumulated.slice(-300));
                 }
             }
         }).catch((err) => {
             if (err?.name !== 'AbortError') {
-                console.error("startStream error:", err);
+                console.error("❌ startStream network error:", err);
                 setAiError("Connection interrupted. Please try again.");
             }
         }).finally(() => {
@@ -797,7 +809,18 @@ const ResultsPage = ({ searchData, onBack }) => {
 
     return (
         <div className="selection:bg-[#B89A6A]/20 pb-16 font-sans bg-[#F4F1EB] text-[#1C1916] min-h-screen">
-            <ChatBot destination={destName} aiItinerary={aiItinerary} setAiItinerary={setAiItinerary} hotels={hotels} transport={transport} journeySymbol={journeySymbol} onSelectHotel={toggleHotel} onSelectFlight={toggleFlight} />
+            <ChatBot 
+                destination={destName} 
+                aiItinerary={aiItinerary} 
+                setAiItinerary={(updated) => setAiItinerary({ ...updated })} 
+                hotels={hotels} 
+                transport={transport} 
+                events={events}
+                journeySymbol={journeySymbol} 
+                onSelectHotel={toggleHotel} 
+                onSelectFlight={toggleFlight} 
+                onToggleEvent={toggleEvent}
+            />
 
             <AnimatePresence>
                 {toastMsg && (

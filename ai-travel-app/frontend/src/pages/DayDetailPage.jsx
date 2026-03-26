@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Clock, Utensils, Share, Printer, Plus, Edit2, Camera, X, Navigation, Info, Ticket, ExternalLink } from 'lucide-react';
+import { ArrowLeft, Clock, Utensils, Share, Printer, Plus, Edit2, Camera, X, Navigation, Info, Ticket } from 'lucide-react';
 import { motion } from 'framer-motion';
 import ChatBot from '../components/ChatBot';
 
@@ -18,15 +18,20 @@ const DayDetailPage = ({ dayNumber: propDayNumber, tripId: propTripId, onClose }
     const searchDataCache = localStorage.getItem('travex_search') || sessionStorage.getItem('travex_search');
     const searchDataObj = searchDataCache ? JSON.parse(searchDataCache) : {};
     const destName = searchDataObj.toCity?.name || searchDataObj.toCity || 'Destination';
+    // Read confirmed hotel from results cache to use as directions origin
+    const resultsCache = localStorage.getItem('travex_results_cache');
+    const confirmedHotelName = resultsCache ? (JSON.parse(resultsCache)?.confirmedHotel?.name || '') : '';
 
     const handleItineraryUpdate = (updatedPlan) => {
-        setFullItinerary(updatedPlan);
+        // Write to localStorage synchronously BEFORE incrementing trigger
         const cache = localStorage.getItem('travex_results_cache');
         if (cache) {
             const parsed = JSON.parse(cache);
             parsed.aiItinerary = updatedPlan;
             localStorage.setItem('travex_results_cache', JSON.stringify(parsed));
         }
+        setFullItinerary({ ...updatedPlan });
+        // Trigger re-render: the useEffect that reads localStorage will re-run
         setRefreshTrigger(prev => prev + 1);
     };
 
@@ -269,10 +274,13 @@ const DayDetailPage = ({ dayNumber: propDayNumber, tripId: propTripId, onClose }
                                                     <button
                                                         onClick={() => {
                                                             const geo = item.location?.geo;
-                                                            const query = geo
+                                                            const dest = geo
                                                                 ? `${geo.lat},${geo.lng}`
                                                                 : encodeURIComponent(item.title);
-                                                            window.open(`https://www.google.com/maps/dir/?api=1&destination=${query}`, '_blank');
+                                                            const origin = confirmedHotelName
+                                                                ? encodeURIComponent(confirmedHotelName)
+                                                                : encodeURIComponent(destName);
+                                                            window.open(`https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${dest}`, '_blank');
                                                         }}
                                                         className="text-[10px] uppercase tracking-widest font-medium text-[#2E3C3A] bg-[#F4F1EB] hover:bg-[#E8E4DC] border border-[#E8E4DC] transition-colors px-3 py-2 rounded-xl flex items-center gap-1.5"
                                                     >
@@ -362,7 +370,13 @@ const DayDetailPage = ({ dayNumber: propDayNumber, tripId: propTripId, onClose }
 
                                     return (
                                         <div className="mb-6">
-                                            <div className="w-full h-72 rounded-3xl border border-[#E8E4DC] overflow-hidden shadow-[0_8px_32px_rgba(28,25,22,0.08)] relative z-0 bg-[#E8E4DC]">
+                                            <motion.div 
+                                                key={embedSrc} // 🔑 CRITICAL FIX: Forces React to completely remount the iframe and redraw the route!
+                                                initial={{ opacity: 0, scale: 0.98 }}
+                                                animate={{ opacity: 1, scale: 1 }}
+                                                transition={{ duration: 0.5 }}
+                                                className="w-full h-72 rounded-3xl border border-[#E8E4DC] overflow-hidden shadow-[0_8px_32px_rgba(28,25,22,0.08)] relative z-0 bg-[#E8E4DC]"
+                                            >
                                                 <iframe
                                                     width="100%"
                                                     height="100%"
@@ -372,7 +386,7 @@ const DayDetailPage = ({ dayNumber: propDayNumber, tripId: propTripId, onClose }
                                                     referrerPolicy="no-referrer-when-downgrade"
                                                     src={embedSrc}
                                                 />
-                                            </div>
+                                            </motion.div>
 
                                             {/* Route stop summary displaying highly-accurate names */}
                                             <div className="mt-3 space-y-1.5">

@@ -12,10 +12,10 @@ const ModelConfig = {
   REASONING: "llama-3.3-70b-versatile",
 
   // ⚡ Best for fast chat, NLP extraction, routing
-  FAST: "llama-3.3-70b-versatile",
+  FAST: "llama-3.1-8b-instant",
 
   // 🧠 Generalist fallback
-  GENERAL: "llama-3.3-70b-versatile"
+  GENERAL: "llama-3.1-8b-instant"
 };
 
 // ==========================================
@@ -37,7 +37,10 @@ export const AgentRole = {
   EXTRACTION: "EXTRACTION",  // 👉 Routes to: FAST
 
   // Key E: Logistics Auditor (UPGRADED for math validation)
-  INSPECTOR: "INSPECTOR"    // 👉 Routes to: REASONING
+  INSPECTOR: "INSPECTOR",   // 👉 Routes to: REASONING
+
+  // Special Status: Rate Limit Bypass
+  FALLBACK: "FALLBACK"
 };
 
 // Helper to safely get keys
@@ -54,6 +57,7 @@ const GROQ_KEYS = [
   { id: "groq-c", key: getEnvVar("GROQ_KEY_C"), roles: [AgentRole.CFO], tier: 2 },
   { id: "groq-d", key: getEnvVar("GROQ_KEY_D"), roles: [AgentRole.EXTRACTION], tier: 1 },
   { id: "groq-e", key: getEnvVar("GROQ_KEY_E"), roles: [AgentRole.INSPECTOR], tier: 1 },
+  { id: "groq-fallback", key: getEnvVar("GROQ_KEY_FALLBACK"), roles: [AgentRole.FALLBACK], tier: 1 },
 ];
 
 const AMADEUS_KEYS = [
@@ -107,7 +111,7 @@ class KeyManager {
 export const keyManager = new KeyManager();
 
 // --- 3. PUBLIC ROUTER FUNCTION (WITH 429 FALLBACK) ---
-export async function runAgent(role, systemPrompt, userContent) {
+export async function runAgent(role, systemPrompt, userContent, history = []) {
   const { client, keyId } = keyManager.getGroqClient(role);
 
   // 🔀 DYNAMIC MODEL ROUTER
@@ -131,6 +135,12 @@ export async function runAgent(role, systemPrompt, userContent) {
 
   console.log(`🚀 Booting Agent: [${role}] using Key [${keyId}] on Model [${model}]`);
 
+  // Build message array: system + up to last 10 history turns + current user message
+  const historyMessages = (Array.isArray(history) ? history : [])
+    .filter(m => m.role === 'user' || m.role === 'assistant')
+    .slice(-10) // Limit to last 10 messages to avoid token overflow
+    .map(m => ({ role: m.role, content: m.text || '' }));
+
   // 🛡️ HELPER: Make the API call with timeout
   const callGroq = async (mdl, tp, tokens) => {
     const controller = new AbortController();
@@ -140,6 +150,7 @@ export async function runAgent(role, systemPrompt, userContent) {
       const completion = await client.chat.completions.create({
         messages: [
           { role: "system", content: systemPrompt },
+          ...historyMessages,
           { role: "user", content: userContent }
         ],
         model: mdl,
@@ -218,15 +229,18 @@ export async function* runAgentStream(role, systemPrompt, userContent, signal = 
       console.log(`🌊 Stream aborted by client [${role}].`);
       return;
     }
-    if (error.status === 429 && model !== ModelConfig.FAST) {
-      console.warn(`⚠️ Streaming 429 Rate Limit on [${model}]. Falling back to [${ModelConfig.FAST}]...`);
+    if (error.status === 429) {
+      console.warn(`⚠️ Streaming 429 Rate Limit on [${model}] with Key [${keyId}]. Attempting fallback...`);
       try {
-        // Use a different API key explicitly to escape the block
-        const fallbackKeyData = keyManager.getGroqClient(AgentRole.CFO);
-        const fallbackClient = fallbackKeyData.client;
-        console.warn(`♻️ Swapping to fallback key: [${fallbackKeyData.keyId}]`);
-
-        const fallbackOptions = { ...streamOptions, model: ModelConfig.FAST, temperature: 0.5, max_tokens: 1500 };
+        // Try to use the dedicated fallback key (separate Groq account)
+        const fallbackKey = process.env.GROQ_KEY_FALLBACK;
+        const fallbackClient = fallbackKey
+          ? new (await import('groq-sdk')).default({ apiKey: fallbackKey, timeout: 300000 })
+          : keyManager.getGroqClient(AgentRole.CFO).client;
+        const fallbackModel = fallbackKey ? streamOptions.model : ModelConfig.FAST;
+        
+        console.warn(`♻️ Using ${fallbackKey ? 'dedicated fallback key (new account)' : 'downgraded 8B model'} → [${fallbackModel}]`);
+        const fallbackOptions = { ...streamOptions, model: fallbackModel, max_tokens: 8192 };
         const fallbackStream = await fallbackClient.chat.completions.create(fallbackOptions, { signal });
 
         for await (const chunk of fallbackStream) {

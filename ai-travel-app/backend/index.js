@@ -358,13 +358,30 @@ app.get('/api/hotels', async (req, res) => {
 // --- 🔓 ROUTE 4: AI ARCHITECT (WITH CFO ENGINE + LIVE LIKE A LOCAL) ---
 app.post('/api/itinerary', async (req, res) => {
     try {
-        const { destination, dates, hotel, budget, interests, vibeLevel, tripPurpose } = req.body;
+        const { destination, dates, hotel, budget, interests, vibeLevel, tripPurpose, flight } = req.body;
         const start = new Date(dates?.arrival);
         const end = new Date(dates?.departure);
         if (isNaN(start) || isNaN(end)) {
             return res.status(400).json({ error: 'Invalid dates provided in request' });
         }
         const daysCount = Math.max(1, Math.ceil(Math.abs(end - start) / (1000 * 60 * 60 * 24)) + 1);
+
+        // ✈️ Extract Flight Times for better scheduling
+        let flightArrivalStr = "flexible/unknown time";
+        let flightDepartureStr = "flexible/unknown time";
+        if (flight?.itineraries?.length > 0) {
+            // Outbound arrival (last segment of first itinerary)
+            const outBound = flight.itineraries[0].segments;
+            const arrivalTime = outBound?.[outBound.length - 1]?.arrival?.at;
+            if (arrivalTime) flightArrivalStr = new Date(arrivalTime).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+            
+            // Inbound departure (first segment of second itinerary, if roundtrip)
+            if (flight.itineraries.length > 1) {
+                const inBound = flight.itineraries[1].segments;
+                const departureTime = inBound?.[0]?.departure?.at;
+                if (departureTime) flightDepartureStr = new Date(departureTime).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+            }
+        }
 
         // 💰 1. CFO ENGINE EXTRACTION (Defaulting to INR)
         const dailyAllowance = budget?.dailyAllowance || 0;
@@ -403,13 +420,15 @@ app.post('/api/itinerary', async (req, res) => {
       - Trip Purpose: ${tripPurpose?.toUpperCase() || 'HOLIDAY'}
       - Selected Hotel (Basecamp): ${hotel?.name ? `${hotel.name}` : 'Unknown (Choose centrally)'}
       - Hotel Coordinates: ${hotel?.location?.geo ? `${hotel.location.geo.lat}, ${hotel.location.geo.lng}` : 'N/A'}
+      - Day 1 Landing Time: ${flightArrivalStr}
+      - Final Day Departure Time: ${flightDepartureStr}
 
       ═══════════════════════════════════════════════════════════════════════════
       🔒 HARD CONSTRAINTS (VIOLATION = INVALID TRIP)
       ═══════════════════════════════════════════════════════════════════════════
       1. **Spatial Clustering** – Each day’s activities must reside in a single neighborhood or compact zone. Do not bounce the user across the map in a single day.
       2. **Pacing & Elegance** – Include EXACTLY 4-5 activities per day. You must fill the entire day from morning to evening.
-      3. **Premium Description** – Every 'description' must be 3-4 lush, sensory-rich sentences minimum. Imagine writing for Condé Nast Traveler.
+      3. **Premium Description** – Every 'description' must be 2 vivid, sensory-rich sentences. Be evocative but concise.
       4. **Budget Exactitude** – Sum of all 'cost_estimate' fields MUST NOT exceed ${currency} ${availableToSpend}. Be realistic with pricing.
       5. **Time-of-Day Authenticity** – Match the activity perfectly to the biological and atmospheric reality of the time.
       6. **Output Format** – Your final output MUST end with valid JSON. Inject tasteful emojis into themes and activities.
@@ -419,76 +438,10 @@ app.post('/api/itinerary', async (req, res) => {
       10. **Emojis** – Use ACTUAL emoji characters (like 🍷 or 🏛️). DO NOT use unicode escape sequences.
       11. **Real Establishments Only** – NEVER use generic names like "Local Restaurant" or "Local Cafe". You MUST provide the exact, real-world name of a specific establishment that exists on Google Maps (e.g., "Pujol", "Cafe de Flore").
       12. **Mandatory Basecamp** – You MUST incorporate the "Selected Hotel" above. Day 1 MUST include an explicit "Check-in at [Hotel Name]" activity. The geographic clustering of every day MUST revolve logically around this specific hotel's location.
+      13. **Flight Schedule Alignment** – Day 1 activities MUST begin AFTER the ${flightArrivalStr} arrival (factor in transit/hotel check-in). The Final Day activities MUST conclude well BEFORE the ${flightDepartureStr} departure flight to allow for airport transit.
 
-      ═══════════════════════════════════════════════════════════════════════════
-      📐 REQUIRED JSON SCHEMA 
-      ═══════════════════════════════════════════════════════════════════════════
-        { "trip_name": "Must be catchy, luxurious, and descriptive", "daily_plan": [{ "day": 1, "date": "YYYY-MM-DD", "theme": "Aspirational theme for the day", "activities": [{ "time": "HH:MM", "activity": "Specific real place or activity name", "type": "food|sightseeing|logistics", "cost_estimate": Number, "description": "Lush, evocative, 3-4 sentence minimum description matching a luxury travel magazine.", "reason_for_choice": "Compelling explanation of why this specific place is unmissable.", "transit_instruction": "Specific transit instruction.", "localness_signal": 0.5, "latitude": Number, "longitude": Number }] }] }
-
-      ═══════════════════════════════════════════════════════════════════════════
-      📚 EXACT EXAMPLE FORMAT TO COPY STRICTLY (Notice the rich 4-activity pacing)
-      ═══════════════════════════════════════════════════════════════════════════
-{
-  "trip_name": "Kerala: Backwaters & Heritage Elegance",
-  "daily_plan": [
-    {
-      "day": 1,
-      "date": "2026-03-10",
-      "theme": "🛶 Colonial Echoes & Golden Sunsets",
-      "activities": [
-        {
-          "time": "10:00",
-          "activity": "Fort Kochi Heritage Walk 🚶",
-          "type": "sightseeing",
-          "cost_estimate": 0,
-          "description": "Stroll beneath ancient rain trees as you explore the cobbled streets of Fort Kochi, marveling at the iconic, cantilevered Chinese Fishing Nets silhouetted against the morning sky. The salty breeze from the Arabian Sea wraps around the decaying but beautiful Portuguese architecture. Allow yourself to get lost in the narrow alleys where centuries of spice trade history still linger in the air.",
-          "reason_for_choice": "An essential, deeply atmospheric introduction to Kochi’s layered maritime history.",
-          "transit_instruction": "Take a 20-minute Uber from your hotel directly to the waterfront promenade.",
-          "localness_signal": 0.6,
-          "latitude": 9.9680,
-          "longitude": 76.2410
-        },
-        {
-          "time": "13:00",
-          "activity": "Coastal Gastronomy at Kashi Art Cafe 🍤",
-          "type": "food",
-          "cost_estimate": 800,
-          "description": "Savor incredibly fresh, locally-sourced seafood dishes served in a lush, sun-dappled courtyard that doubles as a vibrant gallery for local artists. The menu blends traditional Keralan spices with contemporary health-conscious cooking, making it an absolute oasis of calm. Rich filter coffee flows endlessly while acoustic music drifts through the tropical foliage surrounding the tables.",
-          "reason_for_choice": "The beating creative heart of Fort Kochi, blending exquisite flavors with inspiring art.",
-          "transit_instruction": "Enjoy a scenic 10-minute walk south past vintage Portuguese architecture.",
-          "localness_signal": 0.8,
-          "latitude": 9.9657,
-          "longitude": 76.2415
-        },
-        {
-          "time": "15:00",
-          "activity": "Mattancherry Palace Museum 🏛️",
-          "type": "sightseeing",
-          "cost_estimate": 100,
-          "description": "Step into the beautifully preserved Dutch Palace to marvel at some of the finest Hindu temple murals in India. The rich history of the Kochi Rajas comes alive within these ancient wooden walls, offering a profoundly atmospheric afternoon retreat from the tropical heat.",
-          "reason_for_choice": "A critical piece of local history with breathtaking, centuries-old murals.",
-          "transit_instruction": "A leisurely 15-minute walk from the cafe through the spice district.",
-          "localness_signal": 0.5,
-          "latitude": 9.9582,
-          "longitude": 76.2594
-        },
-        {
-          "time": "19:00",
-          "activity": "Sunset Dinner at Oceanos Restaurant 🦀",
-          "type": "food",
-          "cost_estimate": 1200,
-          "description": "Conclude your day with a phenomenal fine-dining experience at this beloved local institution. Specializing in Syrian Christian and Kerala coastal cuisine, the candlelit ambiance is matched only by their incredible coconut milk curries and freshly caught tiger prawns. The warm, attentive service makes it an unforgettable culinary journey.",
-          "reason_for_choice": "Considered one of the absolute best, most authentic seafood kitchens in Kochi.",
-          "transit_instruction": "Take a quick 5-minute tuk-tuk ride back towards the northern shore.",
-          "localness_signal": 0.7,
-          "latitude": 9.9620,
-          "longitude": 76.2425
-        }
-      ]
-    }
-  ]
-}
-Follow this level of specificity, professional tone, and format exactly for ${destination}.`;
+      REQUIRED JSON SCHEMA: {"trip_name":"Catchy trip title","daily_plan":[{"day":1,"date":"YYYY-MM-DD","theme":"🎨 Day theme","activities":[{"time":"HH:MM","activity":"Real place name 🗺️","type":"food|sightseeing|logistics","cost_estimate":0,"description":"Two vivid sentences describing the experience.","reason_for_choice":"Why this place is unmissable.","transit_instruction":"Specific transit instruction.","localness_signal":0.5,"latitude":0.0,"longitude":0.0}]}]}
+      Follow this schema exactly for ALL ${daysCount} days. Output RAW JSON ONLY — no Markdown, no code blocks. Start exactly with { and end exactly with }.`;
 
         // 📊 4. INJECT CFO RULES
         systemPrompt += `\n\nFINANCIAL CONSTRAINTS (CFO ENGINE):
@@ -561,40 +514,104 @@ Follow this level of specificity, professional tone, and format exactly for ${de
 
         console.log(`   🌊 Streaming Architect's plan to client...`);
 
-        try {
-            // 🚨 THE FIX: Send immediate, real data chunks to keep the browser happy while Groq thinks
-            res.write(`data: ${JSON.stringify({ status: "Waking up Travel Architect..." })}\n\n`);
-            
-            // Start the Groq stream
-            isStreamingNow = true;
-            const stream = runAgentStream(AgentRole.ARCHITECT, systemPrompt, userContent, controller.signal);
+        // --- ZOD SCHEMA FOR VALIDATION ---
+        const { z } = await import('zod');
+        const ActivitySchema = z.object({
+            time: z.string(),
+            activity: z.string(),
+            type: z.string(), // food, sightseeing, logistics
+            cost_estimate: z.number(),
+            description: z.string(),
+            reason_for_choice: z.string(),
+            transit_instruction: z.string().optional().nullable(),
+            localness_signal: z.number().optional().nullable(),
+            latitude: z.number().optional().nullable(),
+            longitude: z.number().optional().nullable()
+        });
+        const DaySchema = z.object({
+            day: z.number(),
+            date: z.string(),
+            theme: z.string(),
+            activities: z.array(ActivitySchema)
+        });
+        const ItinerarySchema = z.object({
+            trip_name: z.string(),
+            daily_plan: z.array(DaySchema)
+        });
 
-            let isFirstChunk = true;
+        const MAX_RETRIES = 2;
+        let attempt = 0;
+        let isComplete = false;
+        let currentSystemPrompt = systemPrompt;
 
-            for await (const chunk of stream) {
-                if (isFirstChunk) {
-                    isFirstChunk = false;
-                    res.write(`data: ${JSON.stringify({ status: "Generating Itinerary..." })}\n\n`);
+        while (attempt < MAX_RETRIES && !isComplete && !controller.signal.aborted) {
+            attempt++;
+            try {
+                if (attempt === 1) {
+                    res.write(`data: ${JSON.stringify({ status: "Waking up Travel Architect..." })}\n\n`);
+                } else {
+                    res.write(`data: ${JSON.stringify({ status: "Validating & rebuilding itinerary..." })}\n\n`);
+                    res.write(`data: ${JSON.stringify({ retry: true })}\n\n`);
                 }
-                // Send standard SSE format
-                res.write(`data: ${JSON.stringify({ chunk })}\n\n`);
-            }
+                
+                isStreamingNow = true;
+                const stream = runAgentStream(AgentRole.ARCHITECT, currentSystemPrompt, userContent, controller.signal);
 
-            // Send completion message
-            res.write(`data: [DONE]\n\n`);
-            res.end();
-        } catch (streamErr) {
-            // Suppress intended aborts
-            if (streamErr.constructor?.name === 'APIUserAbortError' || streamErr.name === 'AbortError') {
-                console.log("   🌊 Stream aborted by client [ARCHITECT].");
-                res.end();
-                return;
-            }
+                let isFirstChunk = true;
+                let fullResponseBuffer = "";
 
-            console.error("Stream Generator Error:", streamErr);
-            res.write(`data: ${JSON.stringify({ error: "AI temporarily unavailable" })}\n\n`);
-            res.write(`data: [DONE]\n\n`);
-            res.end();
+                for await (const chunk of stream) {
+                    if (isFirstChunk) {
+                        isFirstChunk = false;
+                        res.write(`data: ${JSON.stringify({ status: `Generating Itinerary...${attempt > 1 ? ' (Retry)' : ''}` })}\n\n`);
+                    }
+                    fullResponseBuffer += chunk;
+                    res.write(`data: ${JSON.stringify({ chunk })}\n\n`);
+                }
+
+                isStreamingNow = false;
+
+                // --- VALIDATION PHASE ---
+                try {
+                    // 1. Clean markdown code blocks & Try to parse JSON
+                    const parsedJson = extractJSON(fullResponseBuffer);
+                    // 2. Validate with Zod
+                    ItinerarySchema.parse(parsedJson);
+                    
+                    // If we reach here, it's valid!
+                    isComplete = true;
+                    res.write(`data: [DONE]\n\n`);
+                    res.end();
+
+                } catch (validationErr) {
+                    console.log(`   🚨 Validation failed on attempt ${attempt}:`, validationErr.message);
+                    if (attempt >= MAX_RETRIES) {
+                        console.log("   ❌ Max retries reached. Returning what we have.");
+                        res.write(`data: [DONE]\n\n`);
+                        res.end();
+                        return; // Exit loop
+                    }
+
+                    // Feed the precise error back to the LLM
+                    currentSystemPrompt += `\n\n🚨 CRITICAL ERROR IN PREVIOUS ATTEMPT 🚨\nYou hallucinated an invalid format. Fix the following error exactly: ${validationErr.message}\nMake sure your output strictly matches the required JSON Schema with all required brackets and commas closing correctly.`;
+                }
+
+            } catch (streamErr) {
+                isStreamingNow = false;
+                if (streamErr.constructor?.name === 'APIUserAbortError' || streamErr.name === 'AbortError') {
+                    console.log("   🌊 Stream aborted by client [ARCHITECT].");
+                    res.end();
+                    return;
+                }
+                console.error("Stream Generator Error:", streamErr);
+                if (attempt >= MAX_RETRIES) {
+                    res.write(`data: ${JSON.stringify({ error: "AI temporarily unavailable" })}\n\n`);
+                    res.write(`data: [DONE]\n\n`);
+                    res.end();
+                } else {
+                    currentSystemPrompt += `\n\n🚨 CRITICAL ERROR 🚨\nYour output broke mid-stream. Please ensure your JSON is shorter, strictly formatted, and fully complete.`;
+                }
+            }
         }
 
     } catch (error) {
@@ -881,9 +898,44 @@ ${JSON.stringify(currentItinerary, null, 2)}`;
 // --- CHAT & OTHERS ---
 app.post('/api/mapping', async (req, res) => { res.json({ logistics: [] }); });
 app.post('/api/cfo', async (req, res) => { res.json({ status: "safe" }); });
+app.post('/api/intent', async (req, res) => {
+    try {
+        const { message } = req.body;
+        if (!message) return res.status(400).json({ error: 'Missing message' });
+
+        const systemPrompt = `You are an intent classifier for a travel app. Analyze the user's message and categorize it into exactly ONE of these buckets: "edit_itinerary", "search_hotel", "search_flight", "search_event", or "general_chat".
+        
+Return ONLY a JSON object matching this schema:
+{
+  "intent": "the_bucket",
+  "parameters": {
+    "maxPrice": null, // Number if they mention a budget
+    "wantsCheap": false, // Boolean if they say cheap/affordable
+    "wantsDirect": false // Boolean if they want a direct flight
+  }
+}
+Do not add any extra markdown or conversation.`;
+
+        const result = await runAgent(AgentRole.ROUTER, systemPrompt, `User message: "${message}"`);
+        const parsed = extractJSON(result);
+
+        // Sanitize the intent strictly to protect the frontend matchers
+        const rawIntent = parsed.intent || 'general_chat';
+        const cleanIntent = String(rawIntent).trim().toLowerCase().replace(/[^a-z_]/g, '');
+
+        res.json({ 
+            intent: cleanIntent,
+            parameters: parsed.parameters || {}
+        });
+    } catch (error) {
+        console.error("❌ /api/intent Error:", error.message);
+        res.json({ intent: 'general_chat', parameters: {} });
+    }
+});
+
 app.post('/api/chat', async (req, res) => {
     try {
-        const { message, context } = req.body;
+        const { message, context, history = [] } = req.body;
         const systemPrompt = `You are Travex, an AI Travel Concierge.
 You have the ability to render interactive UI components directly into the chat window (Generative UI).
 ${context?.currentDay ? `\n📍 DAY CONTEXT: The user is currently viewing the details for Day ${context.currentDay}. Please keep this in mind for context. If they ask about "today" or "this day", they mean Day ${context.currentDay}.` : ''}
@@ -909,7 +961,7 @@ Return strictly this JSON format:
 
 If they ask something else, just return normal JSON: { "reply": "Your helpful text response" }`;
 
-        const result = await runAgent(AgentRole.ROUTER, systemPrompt, `User: ${message}`);
+        const result = await runAgent(AgentRole.ROUTER, systemPrompt, `User: ${message}`, history);
         try {
             res.json(extractJSON(result));
         } catch (jsonErr) {
