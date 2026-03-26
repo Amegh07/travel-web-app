@@ -430,7 +430,20 @@ app.post('/api/itinerary', async (req, res) => {
       2. **Pacing & Elegance** – Include EXACTLY 4-5 activities per day. You must fill the entire day from morning to evening.
       3. **Premium Description** – Every 'description' must be 2 vivid, sensory-rich sentences. Be evocative but concise.
       4. **Budget Exactitude** – Sum of all 'cost_estimate' fields MUST NOT exceed ${currency} ${availableToSpend}. Be realistic with pricing.
-      5. **Time-of-Day Authenticity** – Match the activity perfectly to the biological and atmospheric reality of the time.
+      5. **Time-of-Day Intelligence (CRITICAL — THINK BEFORE YOU SCHEDULE)** – You MUST apply real-world common sense to EVERY activity's time slot. Violating this makes the itinerary useless.
+         MANDATORY TIME RULES (non-negotiable):
+         - **Museums, Art Galleries, Biennales, Heritage Sites, Temples, Monuments** → ONLY schedule between 08:00–18:00. They are CLOSED at night. NEVER put these after 19:00.
+         - **Sunrise & Early Morning Views (golden hour, misty valleys, hilltop treks)** → ONLY schedule between 05:30–07:30. Pointless any other time.
+         - **Sunset Viewpoints, Waterfront Sundowners, Rooftop Bars with views** → ONLY schedule between 17:30–19:30, within 60 minutes of local sunset. Scheduling a "sunset view" at 10am is INVALID.
+         - **Beaches** → Best from 07:00–11:00 (cool, uncrowded) or 16:00–18:30 (golden light). NEVER schedule beaches at midday (11:00–15:00) in tropical/hot destinations — it is physically unpleasant.
+         - **Local Markets & Street Food Bazaars** → Morning markets: 06:00–11:00. Evening markets/night bazaars: 18:00–22:00. Daytime (12:00–16:00) markets are almost always closed or dead.
+         - **Fine Dining & Sit-Down Restaurants** → Lunch: 12:00–14:30. Dinner: 19:00–22:00. NEVER schedule a "dinner" at 15:00 or a "lunch" at 21:00.
+         - **Bars, Pubs, Nightclubs, Live Music Venues** → ONLY schedule between 20:00–23:59. These are night-only venues.
+         - **Cafes & Breakfast spots** → ONLY schedule between 07:00–10:30.
+         - **Adventure Activities (kayaking, trekking, cycling tours)** → Schedule in the cool part of the day: 07:00–11:00 or 15:30–18:00. NEVER at noon in summer/tropical climates.
+         - **Shopping Districts & Malls** → Open from 10:00–21:00. Do not schedule before 10:00.
+         - **Religious Sites & Places of Worship** → Respect prayer times. Avoid Friday afternoon for mosques. Early morning (06:00–09:00) visits to temples/churches are often the most authentic.
+         LOGIC TEST: Before placing any activity, ask yourself — "Is this place realistically open and enjoyable at this exact time?" If the answer is no, move it to the correct time window.
       6. **Output Format** – Your final output MUST end with valid JSON. Inject tasteful emojis into themes and activities.
       7. **Precision Coordinates** – "latitude" and "longitude" must be highly accurate decimal coordinates (e.g., 48.8566, 2.3522). This is critical for the interactive map widget.
       8. **Localness Metric** – Assign a "localness_signal" from 0.0 (pure tourist trap) to 1.0 (deeply local hidden gem).

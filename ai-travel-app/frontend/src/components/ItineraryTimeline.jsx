@@ -34,7 +34,8 @@ const buildDayMapsUrl = (activities) => {
         .map(act => {
             // Force search by the specific business name + trip location context
             // AI coordinates are too generic and will drop pins on roads/runways instead of front doors
-            return encodeURIComponent(`${act.activity}, ${activities._contextLocation || 'City'}`);
+            const cleanActivityName = (act.activity || '').replace(/[\p{Emoji_Presentation}\p{Extended_Pictographic}]/gu, '').trim();
+            return encodeURIComponent(`${cleanActivityName}, ${activities._contextLocation || 'City'}`);
         });
 
     if (stops.length === 0) return null;
@@ -127,7 +128,8 @@ const ItineraryTimeline = ({ plan, currency = 'INR' }) => {
 
                                             // ✅ FIX: Force Google Maps Business Search. Raw AI coordinates drop pins unreliably on runways/backroads.
                                             // Appending the trip destination guarantees Google finds the exact business profile, photos, and front door.
-                                            const actMapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(`${act.activity}, ${itinerary.trip_name || ''}`)}`;
+                                            const cleanActivityName = (act.activity || '').replace(/[\p{Emoji_Presentation}\p{Extended_Pictographic}]/gu, '').trim();
+                                            const actMapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(`${cleanActivityName}, ${itinerary.trip_name || ''}`)}`;
 
                                             return (
                                                 <motion.div
@@ -216,7 +218,7 @@ const ItineraryTimeline = ({ plan, currency = 'INR' }) => {
                                                             )}
                                                             {(act.type === 'sightseeing' || act.type === 'event') && (
                                                                 <a
-                                                                    href={`https://www.getyourguide.com/s?q=${encodeURIComponent(act.activity)}+${encodeURIComponent(plan?.trip_name || '')}`}
+                                                                    href={`https://www.getyourguide.com/s?q=${encodeURIComponent(act.activity.replace(/[\p{Emoji_Presentation}\p{Extended_Pictographic}]/gu, '').trim())}+${encodeURIComponent(plan?.trip_name || '')}`}
                                                                     target="_blank"
                                                                     rel="noopener noreferrer"
                                                                     onClick={(e) => e.stopPropagation()}
@@ -263,9 +265,10 @@ const ItineraryTimeline = ({ plan, currency = 'INR' }) => {
             {/* FOOD PLACES MODAL */}
             <AnimatePresence>
                 {selectedFoodAct && (() => {
+                    const cleanActivityName = selectedFoodAct.activity.replace(/[\p{Emoji_Presentation}\p{Extended_Pictographic}]/gu, '').trim();
                     const mapsUrl = selectedFoodAct.latitude && selectedFoodAct.longitude
                         ? `https://www.google.com/maps/search/restaurants/@${selectedFoodAct.latitude},${selectedFoodAct.longitude},15z`
-                        : `https://www.google.com/maps/search/restaurants+near+${encodeURIComponent(selectedFoodAct.activity)}`;
+                        : `https://www.google.com/maps/search/restaurants+near+${encodeURIComponent(cleanActivityName)}`;
                     return (
                         <motion.div
                             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
