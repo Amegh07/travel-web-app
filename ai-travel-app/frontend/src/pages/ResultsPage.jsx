@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo, useRef } from 'react';
 import {
     ArrowLeft, Plane, Hotel, Calendar, DollarSign, Loader2, Car,
     Ticket, MapPin, X, CheckCircle, ExternalLink, Navigation, Star, ChevronDown, Globe,
-    Music, Utensils, Moon, Camera, Heart
+    Music, Utensils, Moon, Camera, Heart, Share, Copy, Check
 } from 'lucide-react';
 import { searchAll, fetchItineraryStream } from '../services/api';
 import ItineraryTimeline from '../components/ItineraryTimeline';
@@ -39,7 +39,7 @@ const openDirectionsToAirport = (originName) => {
 };
 
 // --- COMPONENT: CHECKOUT BAR ---
-const CheckoutBar = ({ flight, hotel, currencySymbol, nights, destName, originName, departDate }) => {
+const CheckoutBar = ({ flight, hotel, currencySymbol, nights, originName, pax = 1, arrivalDate = new Date() }) => {
     if (!flight || !hotel) return null;
 
     const flightPrice = parseFloat(flight.price?.total || 0);
@@ -66,8 +66,17 @@ const CheckoutBar = ({ flight, hotel, currencySymbol, nights, destName, originNa
                 <div className="flex flex-col sm:flex-row items-stretch gap-3 w-full md:w-auto">
                     <button
                         onClick={() => {
-                            const airline = flight.validatingAirlineCodes?.[0] || '';
-                            window.open(`https://www.google.com/search?btnI=1&q=book+flight+${airline}+official+website`, '_blank');
+                            const outbound = flight.itineraries?.[0];
+                            const firstSeg = outbound?.segments?.[0];
+                            const lastSeg = outbound?.segments?.[outbound.segments.length - 1];
+                            const origin = firstSeg?.departure?.iataCode || '';
+                            const dest = lastSeg?.arrival?.iataCode || '';
+                            const dateObj = new Date(firstSeg?.departure?.at || arrivalDate);
+                            const skyscannerDate = `${String(dateObj.getDate()).padStart(2,'0')}${String(dateObj.getMonth()+1).padStart(2,'0')}${String(dateObj.getFullYear()).slice(-2)}`;
+                            window.open(
+                                `https://www.skyscanner.co.in/transport/flights/${origin}/${dest}/${skyscannerDate}/?adults=${pax}`,
+                                '_blank'
+                            );
                         }}
                         className="flex-1 md:flex-none border border-[#B89A6A] hover:bg-[#B89A6A]/10 text-[#B89A6A] px-7 py-3.5 rounded-2xl text-xs font-bold uppercase tracking-widest transition-all flex items-center justify-center gap-2 group"
                     >
@@ -86,7 +95,7 @@ const CheckoutBar = ({ flight, hotel, currencySymbol, nights, destName, originNa
 };
 
 // --- COMPONENT: FLIGHT CARD ---
-const FlightCard = ({ flight, isSelected, onSelect, showBook = false }) => {
+const FlightCard = ({ flight, isSelected, onSelect, showBook = false, pax = 1, arrivalDate = new Date() }) => {
     const isRoundTrip = flight.itineraries?.length > 1;
     const outbound = flight.itineraries?.[0];
     const returnLeg = flight.itineraries?.[1];
@@ -114,7 +123,7 @@ const FlightCard = ({ flight, isSelected, onSelect, showBook = false }) => {
                                 className="w-full h-full object-contain p-1"
                                 onError={(e) => {
                                     e.target.onerror = null;
-                                    e.target.src = getAirlineLogoFallback(airlineCode);
+                                    e.target.src = getAirlineLogoFallback();
                                     e.target.className = 'w-full h-full object-cover';
                                 }}
                             />
@@ -135,7 +144,20 @@ const FlightCard = ({ flight, isSelected, onSelect, showBook = false }) => {
                     <div className="serif-text text-3xl font-light text-[#1C1916] tracking-tight">{(flight.price?.currency === 'INR' ? '₹' : flight.price?.currency === 'EUR' ? '€' : flight.price?.currency === 'GBP' ? '£' : '$')} {parseFloat(flight.price?.total || 0).toFixed(2)}</div>
                     {showBook && (
                         <button
-                            onClick={(e) => { e.stopPropagation(); window.open(`https://www.google.com/search?btnI=1&q=book+flight+${airlineCode}+official+website`, '_blank'); }}
+                            onClick={(e) => { 
+                                e.stopPropagation(); 
+                                const outbound = flight.itineraries?.[0];
+                                const firstSeg = outbound?.segments?.[0];
+                                const lastSeg = outbound?.segments?.[outbound.segments.length - 1];
+                                const origin = firstSeg?.departure?.iataCode || '';
+                                const dest = lastSeg?.arrival?.iataCode || '';
+                                const dateObj = new Date(firstSeg?.departure?.at || arrivalDate);
+                                const skyscannerDate = `${String(dateObj.getDate()).padStart(2,'0')}${String(dateObj.getMonth()+1).padStart(2,'0')}${String(dateObj.getFullYear()).slice(-2)}`;
+                                window.open(
+                                    `https://www.skyscanner.co.in/transport/flights/${origin}/${dest}/${skyscannerDate}/?adults=${pax}`,
+                                    '_blank'
+                                );
+                            }}
                             className="mt-3 text-[10px] bg-[#B89A6A] hover:bg-[#A8876A] text-[#FDFCFA] font-medium px-4 py-2 rounded-xl flex items-center gap-2 ml-auto transition-all tracking-widest uppercase"
                         >
                             <Globe size={14} /> Book Now
@@ -306,7 +328,7 @@ const EventCard = ({ event, isAdded, onToggle }) => {
 };
 
 // --- MODALS ---
-const FlightModal = ({ isOpen, onClose, flights, selectedId, onSelect }) => {
+const FlightModal = ({ isOpen, onClose, flights, selectedId, onSelect, pax = 1, arrivalDate = new Date() }) => {
     const [sort, setSort] = useState('cheap');
     const sortedFlights = useMemo(() => { if (!flights) return []; return [...flights].sort((a, b) => sort === 'cheap' ? parseFloat(a.price.total) - parseFloat(b.price.total) : a.itineraries[0].duration.localeCompare(b.itineraries[0].duration)); }, [flights, sort]);
     if (!isOpen) return null;
@@ -322,7 +344,7 @@ const FlightModal = ({ isOpen, onClose, flights, selectedId, onSelect }) => {
                         <button key={type} onClick={() => setSort(type)} className={`px-4 py-2 rounded-xl text-[10px] tracking-widest uppercase font-medium border transition-all ${sort === type ? 'bg-[#1C1916] text-[#FDFCFA] border-[#1C1916]' : 'text-[#9C9690] border-[#E8E4DC] hover:border-[#1C1916]/30 bg-[#F4F1EB]'}`}>{type === 'cheap' ? 'Cheapest' : 'Fastest'}</button>
                     ))}
                 </div>
-                <div className="overflow-y-auto p-6 space-y-4">{sortedFlights.map((f, i) => <FlightCard key={i} flight={f} isSelected={selectedId === f.id} onSelect={(fl) => { onSelect(fl); onClose(); }} showBook={true} />)}</div>
+                <div className="overflow-y-auto p-6 space-y-4">{sortedFlights.map((f, i) => <FlightCard key={i} flight={f} isSelected={selectedId === f.id} onSelect={(fl) => { onSelect(fl); onClose(); }} showBook={true} pax={pax} arrivalDate={arrivalDate} />)}</div>
             </div>
         </div>
     );
@@ -518,6 +540,11 @@ const ResultsPage = ({ searchData, onBack }) => {
     const [aiError, setAiError] = useState(null);
     const [plannerLoading, setPlannerLoading] = useState(false);
 
+    // Save & Share State
+    const [isSaving, setIsSaving] = useState(false);
+    const [shareLink, setShareLink] = useState(null);
+    const [copied, setCopied] = useState(false);
+
     // Refs for stream control
     const plannerHasFired = useRef(false);
     const abortControllerRef = useRef(null);
@@ -543,6 +570,47 @@ const ResultsPage = ({ searchData, onBack }) => {
     const showToast = (msg) => {
         setToastMsg(msg);
         setTimeout(() => setToastMsg(null), 3000);
+    };
+
+    // --- SAVE & SHARE LOGIC ---
+    const handleSaveTrip = async () => {
+        setIsSaving(true);
+        try {
+            const cache = localStorage.getItem('travex_results_cache');
+            const searchDataStr = sessionStorage.getItem('travex_search') || localStorage.getItem('travex_search');
+            
+            const payload = {
+                searchData: searchDataStr ? JSON.parse(searchDataStr) : searchData,
+                resultsData: cache ? JSON.parse(cache) : {}
+            };
+
+            const response = await fetch('http://localhost:5000/api/save-trip', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const data = await response.json();
+            
+            if (data.id) {
+                const url = `${window.location.origin}/shared/${data.id}`;
+                setShareLink(url);
+            } else {
+                alert('Failed to save trip');
+            }
+        } catch (err) {
+            console.error(err);
+            alert('Error saving trip. Check console.');
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
+    const copyToClipboard = () => {
+        if (shareLink) {
+            navigator.clipboard.writeText(shareLink);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+        }
     };
 
     // --- SELECTION TOGGLES ---
@@ -703,7 +771,10 @@ const ResultsPage = ({ searchData, onBack }) => {
             flight,
             budget: { total: totalBudget, currency: journeyCurrency, remaining, dailyAllowance: dailyAllow },
             interests: searchData?.interests || [],
-            tripType
+            vibeLevel: searchData?.vibeLevel || 1,
+            tripPurpose: searchData?.tripPurpose || 'holiday',
+            tripType,
+            pax: searchData?.pax || 1  // 👥 Pass passenger count to AI
         };
 
         const tryParsePartialJSON = (s) => {
@@ -795,17 +866,21 @@ const ResultsPage = ({ searchData, onBack }) => {
 
     if (!searchData) return null;
 
-    const sortedFlights = [...(transport.results || [])].sort((a, b) => {
-        if (confirmedFlight?.id === a.id) return -1;
-        if (confirmedFlight?.id === b.id) return 1;
-        return 0;
-    });
+    const sortedFlights = useMemo(() => {
+        return [...(transport.results || [])].sort((a, b) => {
+            if (confirmedFlight?.id === a.id) return -1;
+            if (confirmedFlight?.id === b.id) return 1;
+            return 0;
+        });
+    }, [transport.results, confirmedFlight?.id]);
 
-    const sortedHotels = [...hotels].sort((a, b) => {
-        if (confirmedHotel?.id === a.id) return -1;
-        if (confirmedHotel?.id === b.id) return 1;
-        return 0;
-    });
+    const sortedHotels = useMemo(() => {
+        return [...hotels].sort((a, b) => {
+            if (confirmedHotel?.id === a.id) return -1;
+            if (confirmedHotel?.id === b.id) return 1;
+            return 0;
+        });
+    }, [hotels, confirmedHotel?.id]);
 
     return (
         <div className="selection:bg-[#B89A6A]/20 pb-16 font-sans bg-[#F4F1EB] text-[#1C1916] min-h-screen">
@@ -862,6 +937,18 @@ const ResultsPage = ({ searchData, onBack }) => {
                                     <ArrowLeft className="w-4 h-4" /> Return
                                 </button>
                             </div>
+
+                            {aiItinerary && (
+                                <div className="absolute top-8 right-8">
+                                    <button 
+                                        onClick={handleSaveTrip} 
+                                        disabled={isSaving}
+                                        className={`px-5 py-2.5 rounded-full flex items-center gap-2 transition-all text-sm font-medium tracking-wide shadow-lg border ${isSaving ? 'bg-[#FDFCFA]/50 text-[#9C9690] border-transparent cursor-not-allowed' : 'bg-[#1C1916] text-[#FDFCFA] hover:bg-[#2E3C3A] border-[#1C1916]'}`}
+                                    >
+                                        <Share className="w-4 h-4" /> {isSaving ? 'Saving...' : 'Save & Share Trip'}
+                                    </button>
+                                </div>
+                            )}
 
                             <div className="flex flex-col xl:flex-row xl:items-end justify-between gap-8 mt-12">
                                 <div className="space-y-4 max-w-2xl w-full">
@@ -1038,14 +1125,62 @@ const ResultsPage = ({ searchData, onBack }) => {
                             hotel={confirmedHotel}
                             currencySymbol={journeySymbol}
                             nights={nights}
-                            destName={destName}
                             originName={originName}
-                            departDate={arrivalDate}
                         />
                     )}
 
                 </div>
             )}
+
+            {/* SHARE MODAL */}
+            <AnimatePresence>
+                {shareLink && (
+                    <motion.div
+                        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                        className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-[#1C1916]/40 backdrop-blur-sm"
+                        onClick={() => setShareLink(null)}
+                    >
+                        <motion.div
+                            initial={{ y: 20, scale: 0.95 }} animate={{ y: 0, scale: 1 }} exit={{ y: 20, scale: 0.95 }}
+                            onClick={e => e.stopPropagation()}
+                            className="bg-[#FDFCFA] rounded-3xl w-full max-w-md shadow-2xl overflow-hidden border border-[#E8E4DC]"
+                        >
+                            <div className="p-6 border-b border-[#E8E4DC] relative">
+                                <button onClick={() => setShareLink(null)} className="absolute top-6 right-6 p-2 rounded-full hover:bg-[#F4F1EB] text-[#9C9690] transition-colors">
+                                    <X size={18} />
+                                </button>
+                                <div className="flex items-center gap-3 mb-2">
+                                    <div className="w-10 h-10 rounded-full bg-[#1C1916] flex items-center justify-center text-[#FDFCFA]">
+                                        <Share size={18} />
+                                    </div>
+                                    <div>
+                                        <h3 className="serif-text text-xl text-[#1C1916] font-light">Trip Saved!</h3>
+                                        <p className="text-xs text-[#9C9690]">Copy the link below to access your itinerary anytime.</p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="p-6 bg-[#F4F1EB] space-y-4">
+                                <div className="flex items-center justify-between p-3 bg-[#FDFCFA] border border-[#E8E4DC] rounded-xl overflow-hidden">
+                                    <span className="text-xs font-mono text-[#5A554A] truncate flex-1 select-all">{shareLink}</span>
+                                    <button 
+                                        onClick={copyToClipboard}
+                                        className="ml-3 p-2 bg-[#F4F1EB] hover:bg-[#E8E4DC] rounded-lg transition-colors text-[#1C1916]"
+                                    >
+                                        {copied ? <Check size={16} className="text-[#B89A6A]" /> : <Copy size={16} />}
+                                    </button>
+                                </div>
+                                <button
+                                    onClick={() => setShareLink(null)}
+                                    className="w-full py-3 bg-[#1C1916] hover:bg-[#2E3C3A] text-[#FDFCFA] rounded-xl text-xs font-bold uppercase tracking-widest transition-colors"
+                                >
+                                    Close
+                                </button>
+                            </div>
+                        </motion.div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+
         </div>
     );
 };

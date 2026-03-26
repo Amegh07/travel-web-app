@@ -90,12 +90,13 @@ export const modifyItinerary = async (prompt, currentItinerary, context = {}) =>
 };
 
 // 3. Flight Search (Uses the associated Airport Code)
-export const fetchFlights = async (origin, destination, date, currency) => {
+export const fetchFlights = async (origin, destination, date, currency, pax = 1) => {
     try {
         const originCode = typeof origin === 'object' ? origin.code : origin;
         const destCode = typeof destination === 'object' ? destination.code : destination;
         const currencyParam = currency ? `&currency=${currency}` : '';
-        const res = await fetch(`${API_BASE}/api/flights?origin=${originCode}&destination=${destCode}&date=${date}${currencyParam}`);
+        const paxParam = `&adults=${pax}`;
+        const res = await fetch(`${API_BASE}/api/flights?origin=${originCode}&destination=${destCode}&date=${date}${currencyParam}${paxParam}`);
         if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
         return await res.json();
     } catch (error) {
@@ -104,11 +105,12 @@ export const fetchFlights = async (origin, destination, date, currency) => {
     }
 };
 
-export const fetchHotels = async (destination, budget, currency, checkIn, checkOut) => {
+export const fetchHotels = async (destination, budget, currency, checkIn, checkOut, pax = 1) => {
     try {
         const destCode = typeof destination === 'object' ? destination.code : destination;
         const datesParam = (checkIn && checkOut) ? `&checkIn=${checkIn}&checkOut=${checkOut}` : '';
-        const res = await fetch(`${API_BASE}/api/hotels?destination=${destCode}&budget=${budget || 5000}&currency=${currency || 'INR'}${datesParam}`);
+        const paxParam = `&adults=${pax}`;
+        const res = await fetch(`${API_BASE}/api/hotels?destination=${destCode}&budget=${budget || 5000}&currency=${currency || 'INR'}${datesParam}${paxParam}`);
         if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
         return await res.json();
     } catch (error) {
@@ -182,14 +184,6 @@ export const fetchItineraryStream = async (payload, onChunk, onError, onRetry, s
                     if (dataStr === '[DONE]') {
                         return; // Stream finished naturally
                     }
-                    // The provided code snippet for the change seems to be from a different context
-                    // as it refers to `accumulatedJson`, `setAiItinerary`, and `finalPlan`
-                    // which are not present in this function.
-                    // To address the instruction "Stop triggering the red Chrome DEV tools trace dump when the fallback parser initializes. Add empty string protection."
-                    // and make the change syntactically correct, I will assume the intent was to
-                    // ensure `parsed.chunk` is not empty before calling `onChunk`.
-                    // If the original intent was to add a final parse of an `accumulatedJson`
-                    // variable, that variable would need to be defined and managed within this function.
                     let parsed;
                     try {
                         parsed = JSON.parse(dataStr);

@@ -52,12 +52,12 @@ const getEnvVar = (key) => {
 
 // Key definitions
 const GROQ_KEYS = [
-  { id: "groq-a", key: getEnvVar("GROQ_KEY_A"), roles: [AgentRole.ARCHITECT, AgentRole.MAPPING], tier: 1 },
-  { id: "groq-b", key: getEnvVar("GROQ_KEY_B"), roles: [AgentRole.GUIDE, AgentRole.ROUTER], tier: 1 },
-  { id: "groq-c", key: getEnvVar("GROQ_KEY_C"), roles: [AgentRole.CFO], tier: 2 },
-  { id: "groq-d", key: getEnvVar("GROQ_KEY_D"), roles: [AgentRole.EXTRACTION], tier: 1 },
-  { id: "groq-e", key: getEnvVar("GROQ_KEY_E"), roles: [AgentRole.INSPECTOR], tier: 1 },
-  { id: "groq-fallback", key: getEnvVar("GROQ_KEY_FALLBACK"), roles: [AgentRole.FALLBACK], tier: 1 },
+  { id: "groq-a", key: getEnvVar("GROQ_KEY_A"), roles: [AgentRole.ARCHITECT, AgentRole.MAPPING] },
+  { id: "groq-b", key: getEnvVar("GROQ_KEY_B"), roles: [AgentRole.GUIDE, AgentRole.ROUTER] },
+  { id: "groq-c", key: getEnvVar("GROQ_KEY_C"), roles: [AgentRole.CFO] },
+  { id: "groq-d", key: getEnvVar("GROQ_KEY_D"), roles: [AgentRole.EXTRACTION] },
+  { id: "groq-e", key: getEnvVar("GROQ_KEY_E"), roles: [AgentRole.INSPECTOR] },
+  { id: "groq-fallback", key: getEnvVar("GROQ_KEY_FALLBACK"), roles: [AgentRole.FALLBACK] },
 ];
 
 const AMADEUS_KEYS = [
@@ -110,28 +110,21 @@ class KeyManager {
 
 export const keyManager = new KeyManager();
 
+// --- 🛠️ HELPER: AGENT CONFIGURATION ---
+function getAgentConfig(role) {
+  if (role === AgentRole.ARCHITECT || role === AgentRole.MAPPING || role === AgentRole.INSPECTOR) {
+    return { model: ModelConfig.REASONING, temp: 0.5, maxTokens: 8192 };
+  }
+  if (role === AgentRole.GUIDE) {
+    return { model: ModelConfig.GENERAL, temp: 0.6, maxTokens: 2048 };
+  }
+  return { model: ModelConfig.FAST, temp: 0.7, maxTokens: 1500 };
+}
+
 // --- 3. PUBLIC ROUTER FUNCTION (WITH 429 FALLBACK) ---
 export async function runAgent(role, systemPrompt, userContent, history = []) {
   const { client, keyId } = keyManager.getGroqClient(role);
-
-  // 🔀 DYNAMIC MODEL ROUTER
-  let model = ModelConfig.FAST;
-  let temp = 0.7;
-  let maxTokens = 1500; // Default for fast agents
-
-  // 1. Heavy Auditing & Planning (DeepSeek-R1 / Llama 70b)
-  if (role === AgentRole.ARCHITECT || role === AgentRole.MAPPING || role === AgentRole.INSPECTOR) {
-    model = ModelConfig.REASONING;
-    temp = 0.5; // Increased from 0.1 to allow high-end, creative travel writing
-    maxTokens = 8192; // Itineraries need space — 8k ensures no truncation
-  }
-  // 2. Creative Guidance (Llama 3.3 70B)
-  else if (role === AgentRole.GUIDE) {
-    model = ModelConfig.GENERAL;
-    temp = 0.6;
-    maxTokens = 2048;
-  }
-  // 3. Extraction & CFO & Router (Llama 3.1 8B — defaults above)
+  const { model, temp, maxTokens } = getAgentConfig(role);
 
   console.log(`🚀 Booting Agent: [${role}] using Key [${keyId}] on Model [${model}]`);
 
@@ -189,20 +182,7 @@ export async function runAgent(role, systemPrompt, userContent, history = []) {
 // ==========================================
 export async function* runAgentStream(role, systemPrompt, userContent, signal = null) {
   const { client, keyId } = keyManager.getGroqClient(role);
-
-  let model = ModelConfig.FAST;
-  let temp = 0.7;
-  let maxTokens = 1500;
-
-  if (role === AgentRole.ARCHITECT || role === AgentRole.MAPPING || role === AgentRole.INSPECTOR) {
-    model = ModelConfig.REASONING;
-    temp = 0.5; // Increased from 0.1 for richer descriptions
-    maxTokens = 8192; // Itineraries need space — 8k ensures no truncation
-  } else if (role === AgentRole.GUIDE) {
-    model = ModelConfig.GENERAL;
-    temp = 0.6;
-    maxTokens = 2048;
-  }
+  const { model, temp, maxTokens } = getAgentConfig(role);
 
   console.log(`🌊 Booting Streaming Agent: [${role}] using Key [${keyId}] on Model [${model}]`);
 

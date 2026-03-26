@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { runAgent, runAgentStream, AgentRole, keyManager } from './smartRouter.js';
+import { saveTripData } from './tripStore.js';
 
 // Load secrets
 dotenv.config();
@@ -128,6 +129,40 @@ async function resolveCityData(keyword) {
     }
 }
 
+// --- 🛠️ HELPER: BUILD HOTEL LIST (shared by /api/hotels and /api/search-all) ---
+function buildHotelResults(topHotels, offersMap, nights, currency, budget) {
+    const currencySymbol = currency === 'USD' ? '$' : currency === 'EUR' ? '€' : '₹';
+    const totalBudget    = parseFloat(budget || 5000);
+    const dailyBudget    = totalBudget / nights;
+
+    let estimatedPrice;
+    if      (currency === 'USD') estimatedPrice = dailyBudget >= 800 ? 350 : dailyBudget >= 300 ? 180 : 90;
+    else if (currency === 'EUR') estimatedPrice = dailyBudget >= 800 ? 300 : dailyBudget >= 300 ? 150 : 80;
+    else                         estimatedPrice = dailyBudget >= 60000 ? 15000 : dailyBudget >= 20000 ? 6000 : dailyBudget >= 8000 ? 3000 : 1500;
+
+    const randomizePrice = (base, id) => {
+        const hash = Array.from(id).reduce((a, c) => a + c.charCodeAt(0), 0);
+        return Math.floor(base * (1 + ((hash % 40) - 20) / 100));
+    };
+
+    return topHotels.slice(0, 6).map(h => {
+        const realTotal   = offersMap[h.hotelId];
+        let   pricePerNight = realTotal ? (realTotal / nights) : randomizePrice(estimatedPrice, h.hotelId);
+        if (currency === 'INR' && pricePerNight < 1000) pricePerNight = 1000 + Math.random() * 500;
+        if (currency === 'USD' && pricePerNight < 50)   pricePerNight = 50   + Math.random() * 20;
+        if (currency === 'EUR' && pricePerNight < 50)   pricePerNight = 50   + Math.random() * 20;
+        return {
+            id:          h.hotelId,
+            name:        h.name,
+            image:       `https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&w=800&q=80`,
+            rating:      h.rating || '4.0',
+            price:       `${currencySymbol}${Math.floor(pricePerNight)}/night`,
+            isRealPrice: !!realTotal,
+            distance:    `${h.distance?.value?.toFixed(1) || '1'} ${h.distance?.unit || 'KM'} from center`
+        };
+    });
+}
+
 // --- 🛠️ HELPER: TICKETMASTER FETCH ---
 async function fetchTicketmasterEvents(city, _date) {
     if (!TICKETMASTER_KEY) return null;
@@ -179,8 +214,9 @@ app.get('/api/city-search', async (req, res) => {
 // --- ✈️ ROUTE 2: FLIGHT SEARCH (One-Way + Round Trip) ---
 app.get('/api/flights', async (req, res) => {
     try {
-        const { origin, destination, date, returnDate, tripType, currency } = req.query;
-        console.log(`✈️  Flight Search: ${origin} -> ${destination} | type: ${tripType || 'one-way'} | return: ${returnDate || 'N/A'}`);
+        const { origin, destination, date, returnDate, tripType, currency, adults } = req.query;
+        const numTravelers = Math.max(1, parseInt(adults) || 1);
+        console.log(`✈️  Flight Search: ${origin} -> ${destination} | type: ${tripType || 'one-way'} | return: ${returnDate || 'N/A'} | pax: ${numTravelers}`);
 
         const originData = await resolveCityData(origin);
         const destData   = await resolveCityData(destination);
@@ -190,7 +226,7 @@ app.get('/api/flights', async (req, res) => {
             originLocationCode:      originData.iata,
             destinationLocationCode: destData.iata,
             departureDate:           date,
-            adults:                  '1',
+            adults:                  String(numTravelers),
             max:                     '10',
             ...(currency && { currencyCode: currency }),
             // Only add returnDate if it's a round trip AND returnDate exists
@@ -211,146 +247,51 @@ app.get('/api/flights', async (req, res) => {
 
 // --- 🏨 ROUTE 3: HOTEL SEARCH (TWO-STEP: GEOCODE + REAL PRICING) ---
 app.get('/api/hotels', async (req, res) => {
-    const targetCity = req.query.destination || req.query.cityCode;
+    const targetCity  = req.query.destination || req.query.cityCode;
     const totalBudget = parseFloat(req.query.budget) || 5000;
-    const currency = req.query.currency || 'INR';
-    const checkIn = req.query.checkIn;
-    const checkOut = req.query.checkOut;
-    const currencySymbol = currency === 'USD' ? '$' : currency === 'EUR' ? '€' : '₹';
+    const currency    = req.query.currency || 'INR';
+    const checkIn     = req.query.checkIn;
+    const checkOut    = req.query.checkOut;
+    const numTravelers = Math.max(1, parseInt(req.query.adults) || 1);
+    const roomCount    = Math.ceil(numTravelers / 2);
 
-    // Calculate nights to fix "expensive" total stay bug
-    let nights = 1;
-    if (checkIn && checkOut) {
-        const start = new Date(checkIn);
-        const end = new Date(checkOut);
-        if (!isNaN(start) && !isNaN(end)) {
-            nights = Math.max(1, Math.ceil(Math.abs(end - start) / (1000 * 60 * 60 * 24)));
-        }
-    }
+    const nights = (checkIn && checkOut)
+        ? Math.max(1, Math.ceil(Math.abs(new Date(checkOut) - new Date(checkIn)) / (1000 * 60 * 60 * 24)))
+        : 1;
 
     try {
-        console.log(`🏨 Searching Hotels for: ${targetCity} | ${checkIn} → ${checkOut} | ${nights} nights | ${currency}`);
-
-        // STEP 1: Get hotel IDs via byGeocode
         const cityData = await resolveCityData(targetCity);
-        if (!cityData.geo) throw new Error("Could not resolve Geocode for city.");
+        if (!cityData.geo) throw new Error('Could not resolve Geocode for city.');
 
-        const amadeus = keyManager.getAmadeusClient("HOTELS");
+        const amadeus = keyManager.getAmadeusClient('HOTELS');
         const geoResponse = await amadeus.referenceData.locations.hotels.byGeocode.get({
-            latitude: cityData.geo.latitude,
-            longitude: cityData.geo.longitude,
-            radius: 10,
-            radiusUnit: 'KM',
+            latitude: cityData.geo.latitude, longitude: cityData.geo.longitude,
+            radius: 10, radiusUnit: 'KM'
         });
 
-        // Sort by distance and take the 20 closest to search for pricing
-        const sorted = [...geoResponse.data].sort((a, b) =>
-            (a.distance?.value || 99) - (b.distance?.value || 99)
-        );
-        const topHotels = sorted.slice(0, 20);
+        const topHotels = [...geoResponse.data]
+            .sort((a, b) => (a.distance?.value || 99) - (b.distance?.value || 99))
+            .slice(0, 20);
         const hotelIds = topHotels.map(h => h.hotelId).join(',');
 
-        // STEP 2: Fetch real prices if dates are available
         let offersMap = {};
         if (checkIn && checkOut && hotelIds) {
             try {
-                console.log(`   💰 Fetching real prices for ${topHotels.length} hotels...`);
                 const offersResponse = await amadeus.shopping.hotelOffersSearch.get({
-                    hotelIds,
-                    checkInDate: checkIn,
-                    checkOutDate: checkOut,
-                    adults: '1',
-                    currencyCode: currency,
-                    bestRateOnly: true
+                    hotelIds, checkInDate: checkIn, checkOutDate: checkOut,
+                    adults: String(numTravelers), roomQuantity: String(roomCount),
+                    currencyCode: currency, bestRateOnly: true
                 });
-                // Build a map of hotelId → lowest price
                 offersResponse.data.forEach(offer => {
                     const price = offer.offers?.[0]?.price?.total;
                     if (price) offersMap[offer.hotel.hotelId] = parseFloat(price);
                 });
-                console.log(`   ✅ Got real prices for ${Object.keys(offersMap).length} hotels.`);
-            } catch {
-                console.log(`   ⚠️ hotelOffersSearch failed (test env limitation), using estimated prices.`);
-            }
+            } catch { /* use estimates */ }
         }
 
-        // Fallback estimated price per night if real pricing unavailable
-        const dailyBudget = totalBudget / nights;
-        let estimatedPrice;
-
-        // Ensure baseline hotel prices are far more realistic (not 30/night)
-        if (currency === 'USD') {
-            estimatedPrice = dailyBudget >= 800 ? 350 : dailyBudget >= 300 ? 180 : 90;
-        } else if (currency === 'EUR') {
-            estimatedPrice = dailyBudget >= 800 ? 300 : dailyBudget >= 300 ? 150 : 80;
-        } else {
-            // INR
-            estimatedPrice = dailyBudget >= 60000 ? 15000 : dailyBudget >= 20000 ? 6000 : dailyBudget >= 8000 ? 3000 : 1500;
-        }
-
-        // Add slight pseudo-random variation based on hotel ID so they don't all cost exactly the same
-        const randomizePrice = (base, idString) => {
-            const hash = Array.from(idString).reduce((acc, char) => acc + char.charCodeAt(0), 0);
-            const variation = ((hash % 40) - 20) / 100; // Gives -0.20 to +0.20
-            return Math.floor(base * (1 + variation));
-        };
-
-        // Build final hotel list candidates
-        const topCandidates = topHotels
-            .sort((a, b) => (offersMap[a.hotelId] || 9999) - (offersMap[b.hotelId] || 9999))
-            .slice(0, 6);
-
-        // 🤖 Ask AI for Pricing on hotels missing real data
-        let aiEstimatedPrices = {};
-        const hotelsNeedingEstimates = topCandidates.filter(h => !offersMap[h.hotelId]);
-
-        if (hotelsNeedingEstimates.length > 0) {
-            console.log(`   🤖 Asking AI to estimate nightly prices for ${hotelsNeedingEstimates.length} hotels in ${targetCity}...`);
-            const sanitize = (str) => str.replace(/[^\w\s,\-']/g, '').slice(0, 100);
-            const hotelNames = hotelsNeedingEstimates.map(h => sanitize(h.name)).join(", ");
-            const prompt = `You are an elite travel pricing expert. Estimate the realistic nightly cost (in ${currency}) for a standard room at these specific hotels in ${targetCity}: ${hotelNames}.
-            Return strictly a JSON object mapping the exact hotel name to the estimated nightly price as a Number. Example: { "The Plaza": 450, "Hilton": 200 }`;
-
-            try {
-                const aiResponse = await runAgent(AgentRole.GUIDE, prompt, `Determine realistic market rates for ${targetCity}.`);
-                const parsedPrices = extractJSON(aiResponse);
-
-                hotelsNeedingEstimates.forEach(h => {
-                    if (parsedPrices[h.name]) {
-                        aiEstimatedPrices[h.hotelId] = parsedPrices[h.name];
-                    }
-                });
-                console.log(`   ✅ AI provided estimates for ${Object.keys(aiEstimatedPrices).length} hotels.`);
-            } catch (aiErr) {
-                console.log("   ⚠️ AI estimation failed, falling back to math calculation.", aiErr.message);
-            }
-        }
-
-        const hotels = topCandidates.map(h => {
-            const realPriceTotal = offersMap[h.hotelId];
-            let pricePerNight = realPriceTotal ? (realPriceTotal / nights) : (aiEstimatedPrices[h.hotelId] || randomizePrice(estimatedPrice, h.hotelId));
-
-            // Final safety net to prevent absurdly low prices
-            if (currency === 'INR' && pricePerNight < 1000) pricePerNight = 1000 + (Math.random() * 500);
-            if (currency === 'USD' && pricePerNight < 50) pricePerNight = 50 + (Math.random() * 20);
-            if (currency === 'EUR' && pricePerNight < 50) pricePerNight = 50 + (Math.random() * 20);
-
-            return {
-                id: h.hotelId,
-                name: h.name,
-                image: `https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&w=800&q=80`,
-                rating: h.rating || '3.5',
-                price: `${currencySymbol}${Math.floor(pricePerNight)}/night`,
-                isRealPrice: !!realPriceTotal || !!aiEstimatedPrices[h.hotelId],
-                distance: `${h.distance?.value?.toFixed(1) || "1"} ${h.distance?.unit || "KM"} from center`
-            };
-        });
-
-        console.log(`   ✅ Returning ${hotels.length} hotels (${Object.keys(offersMap).length} with real pricing).`);
-        res.json(hotels);
-
+        res.json(buildHotelResults(topHotels, offersMap, nights, currency, totalBudget));
     } catch (error) {
-        console.log(`   ⚠️ Hotel API Error:`, error.message);
+        console.error('Hotel API Error:', error.message);
         res.json([]);
     }
 });
@@ -358,7 +299,8 @@ app.get('/api/hotels', async (req, res) => {
 // --- 🔓 ROUTE 4: AI ARCHITECT (WITH CFO ENGINE + LIVE LIKE A LOCAL) ---
 app.post('/api/itinerary', async (req, res) => {
     try {
-        const { destination, dates, hotel, budget, interests, vibeLevel, tripPurpose, flight } = req.body;
+        const { destination, dates, hotel, budget, interests, vibeLevel, tripPurpose, flight, pax } = req.body;
+        const numTravelers = Math.max(1, parseInt(pax) || 1);
         const start = new Date(dates?.arrival);
         const end = new Date(dates?.departure);
         if (isNaN(start) || isNaN(end)) {
@@ -428,9 +370,10 @@ app.post('/api/itinerary', async (req, res) => {
       ═══════════════════════════════════════════════════════════════════════════
       1. **Spatial Clustering** – Each day’s activities must reside in a single neighborhood or compact zone. Do not bounce the user across the map in a single day.
       2. **Pacing & Elegance** – Include EXACTLY 4-5 activities per day. You must fill the entire day from morning to evening.
-      3. **Premium Description** – Every 'description' must be 2 vivid, sensory-rich sentences. Be evocative but concise.
-      4. **Budget Exactitude** – Sum of all 'cost_estimate' fields MUST NOT exceed ${currency} ${availableToSpend}. Be realistic with pricing.
-      5. **Time-of-Day Intelligence (CRITICAL — THINK BEFORE YOU SCHEDULE)** – You MUST apply real-world common sense to EVERY activity's time slot. Violating this makes the itinerary useless.
+      3. **Explicit Interest Matching (CRITICAL)** – You MUST incorporate the user's explicit interests (${interests?.join(', ') || 'Popular Highlights'}) directly into your choices. If they chose "Adventure", there MUST be adventurous activities. If "Food", center the itinerary around culinary experiences. This is a HARD constraint.
+      4. **Premium Description** – Every 'description' must be 2 vivid, sensory-rich sentences. Be evocative but concise.
+      5. **Budget Exactitude** – Sum of all 'cost_estimate' fields MUST NOT exceed ${currency} ${availableToSpend}. Be realistic with pricing.
+      6. **Time-of-Day Intelligence (CRITICAL — THINK BEFORE YOU SCHEDULE)** – You MUST apply real-world common sense to EVERY activity's time slot. Violating this makes the itinerary useless.
          MANDATORY TIME RULES (non-negotiable):
          - **Museums, Art Galleries, Biennales, Heritage Sites, Temples, Monuments** → ONLY schedule between 08:00–18:00. They are CLOSED at night. NEVER put these after 19:00.
          - **Sunrise & Early Morning Views (golden hour, misty valleys, hilltop treks)** → ONLY schedule between 05:30–07:30. Pointless any other time.
@@ -452,11 +395,25 @@ app.post('/api/itinerary', async (req, res) => {
       11. **Real Establishments Only** – NEVER use generic names like "Local Restaurant" or "Local Cafe". You MUST provide the exact, real-world name of a specific establishment that exists on Google Maps (e.g., "Pujol", "Cafe de Flore").
       12. **Mandatory Basecamp** – You MUST incorporate the "Selected Hotel" above. Day 1 MUST include an explicit "Check-in at [Hotel Name]" activity. The geographic clustering of every day MUST revolve logically around this specific hotel's location.
       13. **Flight Schedule Alignment** – Day 1 activities MUST begin AFTER the ${flightArrivalStr} arrival (factor in transit/hotel check-in). The Final Day activities MUST conclude well BEFORE the ${flightDepartureStr} departure flight to allow for airport transit.
+      14. **Transit Buffers (NON-NEGOTIABLE)** — After EVERY activity, you MUST insert a minimum 30-minute gap before the next activity starts. If Activity A ends at 14:00, Activity B cannot start before 14:30. No exceptions. If the activity has a transit_instruction, the gap must be at least as long as the transit time mentioned.
+      15. **Luggage Logic** — If the flight arrival time (${flightArrivalStr}) is before 15:00, the VERY FIRST activity on Day 1 MUST be: activity: "Drop luggage at hotel front desk 🧳", type: "logistics", cost_estimate: 0, description: "Head straight to your hotel from the airport to drop your bags before check-in opens. The concierge will store them safely so you can explore hands-free.", time: [30 minutes after arrival]. Do NOT schedule any museum, tour, or paid attraction until this luggage drop activity appears first.
+      16. **Geographic Clustering (STRICT)** — Each day must be confined to ONE named neighborhood or district of ${destName}. State the district in the day theme (e.g., "🗺️ Le Marais & Bastille"). Activities must be walkable or within a single Metro line of each other. NEVER place two activities on opposite sides of the city in the same day.
 
       REQUIRED JSON SCHEMA: {"trip_name":"Catchy trip title","daily_plan":[{"day":1,"date":"YYYY-MM-DD","theme":"🎨 Day theme","activities":[{"time":"HH:MM","activity":"Real place name 🗺️","type":"food|sightseeing|logistics","cost_estimate":0,"description":"Two vivid sentences describing the experience.","reason_for_choice":"Why this place is unmissable.","transit_instruction":"Specific transit instruction.","localness_signal":0.5,"latitude":0.0,"longitude":0.0}]}]}
       Follow this schema exactly for ALL ${daysCount} days. Output RAW JSON ONLY — no Markdown, no code blocks. Start exactly with { and end exactly with }.`;
 
-        // 📊 4. INJECT CFO RULES
+        // 👥 4a. INJECT GROUP / PAX CONTEXT
+        if (numTravelers > 1) {
+            systemPrompt += `\n\nCRITICAL LOGISTICS — GROUP TRAVEL:
+        - This trip is for a GROUP of ${numTravelers} travelers.
+        - The total provided budget of ${currency} ${totalRemaining} MUST cover ALL ${numTravelers} people combined.
+        - When recommending restaurants, always specify a table for ${numTravelers}.
+        - When recommending transport, prefer ${numTravelers > 3 ? 'an SUV/minivan' : 'a standard taxi or rideshare'} to fit the whole group.
+        - All \`cost_estimate\` fields should reflect the TOTAL group cost (not per-person).
+        - Mention group-friendly venues (e.g., large tables, group booking available) where relevant.`;
+        }
+
+        // 📊 4b. INJECT CFO RULES
         systemPrompt += `\n\nFINANCIAL CONSTRAINTS (CFO ENGINE):
         - The user has a STRICT remaining budget of ${currency} ${totalRemaining} for the entire trip (excluding flights/hotels).
         - The average daily allowance is ${currency} ${dailyAllowance}.
@@ -664,34 +621,6 @@ app.post('/api/events', async (req, res) => {
     } catch { res.json([]); }
 });
 
-// --- 🛑 ROUTE 8: FLIGHT WEBHOOKS (CANCELLATION LISTENER) ---
-app.post('/api/webhooks/flights', async (req, res) => {
-    try {
-        const { eventType, flightId, newStatus, reason } = req.body;
-
-        console.log(`\n🚨 [WEBHOOK RECEIVED] Flight Status Update`);
-        console.log(`   Flight ID: ${flightId}`);
-        console.log(`   Event Type: ${eventType}`);
-        console.log(`   New Status: ${newStatus} (${reason || 'No reason provided'})`);
-
-        if (newStatus === 'CANCELED') {
-            console.log(`   ⚠️ ACTION REQUIRED: Flight ${flightId} was canceled. Need to trigger UI update and AI Re-routing.`);
-            // In a real DB, you'd find the user with this flight and mark it canceled.
-            // For now, we simulate success response to the provider.
-        }
-
-        res.status(200).json({ received: true, message: "Webhook processed" });
-    } catch (error) {
-        console.error("Webhook Error:", error);
-        res.status(500).json({ error: "Failed to process webhook" });
-    }
-});
-// ============================================================
-// PASTE BOTH OF THESE ROUTES INTO server/index.js
-// Place them BEFORE the existing --- CHAT & OTHERS --- section
-// ============================================================
-
-
 // ==================================================
 // 📦 ROUTE: SEARCH ALL (Batch: Flights + Hotels + Events)
 // ==================================================
@@ -706,8 +635,11 @@ app.post('/api/search-all', async (req, res) => {
             tripType  = 'round',
             budget,
             currency  = 'INR',
-            interests = []
+            interests = [],
+            pax       = 1
         } = searchData || {};
+        const numTravelers = Math.max(1, parseInt(pax) || 1);
+        const roomCount = Math.ceil(numTravelers / 2);
 
         const originName = typeof fromCity === 'object' ? (fromCity.name || fromCity.code) : fromCity;
         const destName   = typeof toCity   === 'object' ? (toCity.name   || toCity.code)   : toCity;
@@ -740,7 +672,7 @@ app.post('/api/search-all', async (req, res) => {
                     originLocationCode:      originData.iata,
                     destinationLocationCode: destData.iata,
                     departureDate:           checkIn,
-                    adults:                  '1',
+                    adults:                  String(numTravelers),
                     max:                     '10',
                     ...(currency && { currencyCode: currency }),
                     ...(isRoundTrip && { returnDate: checkOut })
@@ -776,54 +708,19 @@ app.post('/api/search-all', async (req, res) => {
                     try {
                         const offersResponse = await amadeus.shopping.hotelOffersSearch.get({
                             hotelIds,
-                            checkInDate:  checkIn,
-                            checkOutDate: checkOut,
-                            adults:       '1',
-                            currencyCode: currency,
-                            bestRateOnly: true
+                            checkInDate:  checkIn, checkOutDate: checkOut,
+                            adults:       String(numTravelers), roomQuantity: String(roomCount),
+                            currencyCode: currency, bestRateOnly: true
                         });
                         offersResponse.data.forEach(offer => {
                             const price = offer.offers?.[0]?.price?.total;
                             if (price) offersMap[offer.hotel.hotelId] = parseFloat(price);
                         });
-                    } catch {
-                        console.log('   ⚠️ Hotel pricing unavailable, using estimates.');
-                    }
+                    } catch { /* use estimates */ }
                 }
 
-                const nights     = Math.max(1, Math.ceil(Math.abs(new Date(checkOut) - new Date(checkIn)) / (1000 * 60 * 60 * 24)));
-                const totalBudget = parseFloat(budget || 5000);
-                const dailyBudget = totalBudget / nights;
-                const currencySymbol = currency === 'USD' ? '$' : currency === 'EUR' ? '€' : '₹';
-
-                let estimatedPrice;
-                if (currency === 'USD')      estimatedPrice = dailyBudget >= 800 ? 350 : dailyBudget >= 300 ? 180 : 90;
-                else if (currency === 'EUR') estimatedPrice = dailyBudget >= 800 ? 300 : dailyBudget >= 300 ? 150 : 80;
-                else                         estimatedPrice = dailyBudget >= 60000 ? 15000 : dailyBudget >= 20000 ? 6000 : dailyBudget >= 8000 ? 3000 : 1500;
-
-                const randomizePrice = (base, id) => {
-                    const hash = Array.from(id).reduce((a, c) => a + c.charCodeAt(0), 0);
-                    return Math.floor(base * (1 + ((hash % 40) - 20) / 100));
-                };
-
-                return topHotels.slice(0, 6).map(h => {
-                    const realTotal   = offersMap[h.hotelId];
-                    let pricePerNight = realTotal ? (realTotal / nights) : randomizePrice(estimatedPrice, h.hotelId);
-
-                    if (currency === 'INR' && pricePerNight < 1000) pricePerNight = 1000 + Math.random() * 500;
-                    if (currency === 'USD' && pricePerNight < 50)   pricePerNight = 50   + Math.random() * 20;
-                    if (currency === 'EUR' && pricePerNight < 50)   pricePerNight = 50   + Math.random() * 20;
-
-                    return {
-                        id:          h.hotelId,
-                        name:        h.name,
-                        image:       `https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&w=800&q=80`,
-                        rating:      h.rating || '4.0',
-                        price:       `${currencySymbol}${Math.floor(pricePerNight)}/night`,
-                        isRealPrice: !!realTotal,
-                        distance:    `${h.distance?.value?.toFixed(1) || "1"} ${h.distance?.unit || "KM"} from center`
-                    };
-                });
+                const nights = Math.max(1, Math.ceil(Math.abs(new Date(checkOut) - new Date(checkIn)) / (1000 * 60 * 60 * 24)));
+                return buildHotelResults(topHotels, offersMap, nights, currency, budget);
             })(),
 
             // 3. EVENTS
@@ -834,7 +731,7 @@ app.post('/api/search-all', async (req, res) => {
                 const result = await runAgent(
                     AgentRole.GUIDE,
                     `You are a local guide. Return a JSON object: { "events": [{ "id": "1", "title": "Event Name", "category": "Music", "description": "Description", "price": "Free", "date": "2026-04-01" }] }. Return ONLY valid JSON.`,
-                    `Find 4 interesting cultural activities or events in ${destName} around ${checkIn}.`
+                    `Find 4 interesting cultural activities or events in ${destName} around ${checkIn}. Crucially, align these events with the user's specific interests if provided: ${interests.length > 0 ? interests.join(', ') : 'popular local highlights'}.`
                 );
                 const parsed = extractJSON(result);
                 return Array.isArray(parsed) ? parsed : (parsed.events || parsed.activities || []);
@@ -986,6 +883,8 @@ If they ask something else, just return normal JSON: { "reply": "Your helpful te
         res.json({ reply: "I'm busy. (AI Connection Error)" });
     }
 });
+
+saveTripData(app);
 
 // --- START SERVER ---
 app.listen(PORT, () => {

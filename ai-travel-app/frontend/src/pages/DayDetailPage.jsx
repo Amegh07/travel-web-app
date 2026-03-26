@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Clock, Utensils, Share, Printer, Plus, Edit2, Camera, X, Navigation, Info, Ticket } from 'lucide-react';
-import { motion } from 'framer-motion';
+import { ArrowLeft, Clock, Utensils, Share, Printer, Plus, Edit2, Camera, X, Navigation, Info, Ticket, Copy, Check } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 import ChatBot from '../components/ChatBot';
 
 const DayDetailPage = ({ dayNumber: propDayNumber, tripId: propTripId, onClose }) => {
@@ -15,6 +15,9 @@ const DayDetailPage = ({ dayNumber: propDayNumber, tripId: propTripId, onClose }
     const [fullItinerary, setFullItinerary] = useState(null);
     const [refreshTrigger, setRefreshTrigger] = useState(0);
     const [error, setError] = useState(null);
+    const [isSaving, setIsSaving] = useState(false);
+    const [shareLink, setShareLink] = useState(null);
+    const [copied, setCopied] = useState(false);
     const searchDataCache = localStorage.getItem('travex_search') || sessionStorage.getItem('travex_search');
     const searchDataObj = searchDataCache ? JSON.parse(searchDataCache) : {};
     const destName = searchDataObj.toCity?.name || searchDataObj.toCity || 'Destination';
@@ -112,6 +115,46 @@ const DayDetailPage = ({ dayNumber: propDayNumber, tripId: propTripId, onClose }
         loadMapData();
     }, [_dayNumber, _tripId, refreshTrigger]);
 
+    const handleSaveTrip = async () => {
+        setIsSaving(true);
+        try {
+            const cache = localStorage.getItem('travex_results_cache');
+            const searchDataStr = localStorage.getItem('travex_search') || sessionStorage.getItem('travex_search');
+            
+            const payload = {
+                searchData: searchDataStr ? JSON.parse(searchDataStr) : {},
+                resultsData: cache ? JSON.parse(cache) : {}
+            };
+
+            const response = await fetch('http://localhost:5000/api/save-trip', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const data = await response.json();
+            
+            if (data.id) {
+                const url = `${window.location.origin}/shared/${data.id}`;
+                setShareLink(url);
+            } else {
+                alert('Failed to save trip');
+            }
+        } catch (err) {
+            console.error(err);
+            alert('Error saving trip. Check console.');
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
+    const copyToClipboard = () => {
+        if (shareLink) {
+            navigator.clipboard.writeText(shareLink);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+        }
+    };
+
     // View Modes Array
     const modes = [
         { id: 'summary', label: 'Summary' },
@@ -160,8 +203,13 @@ const DayDetailPage = ({ dayNumber: propDayNumber, tripId: propTripId, onClose }
                                 </button>
                             ))}
                         </div>
-                        <button className="bg-[#FDFCFA] p-2 rounded-full border border-[#E8E4DC] text-[#1C1916] hover:bg-[#E8E4DC] transition-colors">
-                            <Share className="w-4 h-4" />
+                        <button 
+                            onClick={handleSaveTrip}
+                            disabled={isSaving}
+                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-[#E8E4DC] text-[10px] uppercase font-bold tracking-widest transition-colors ${isSaving ? 'bg-[#E8E4DC] text-[#9C9690] cursor-not-allowed' : 'bg-[#1C1916] text-[#FDFCFA] hover:bg-[#2E3C3A]'}`}
+                        >
+                            <Share className="w-3.5 h-3.5" />
+                            {isSaving ? 'Saving...' : 'Save & Share'}
                         </button>
                         <button className="bg-[#FDFCFA] p-2 rounded-full border border-[#E8E4DC] text-[#1C1916] hover:bg-[#E8E4DC] transition-colors" onClick={() => window.print()}>
                             <Printer className="w-4 h-4" />
@@ -169,6 +217,16 @@ const DayDetailPage = ({ dayNumber: propDayNumber, tripId: propTripId, onClose }
                     </div>
                 </div>
             </header>
+
+            {/* AI Data Freshness Warning */}
+            <div className="bg-amber-50 border-b border-amber-200 px-6 py-2.5 flex items-center justify-center gap-3">
+                <span className="text-amber-500 text-base flex-shrink-0">💡</span>
+                <p className="text-amber-800 text-xs font-medium tracking-wide">
+                    AI-curated spots are based on training data. 
+                    <span className="font-bold"> Verify restaurant hours and attraction availability </span>
+                    before heading out — especially on Mondays and public holidays.
+                </p>
+            </div>
 
             <div className="max-w-7xl mx-auto px-6 py-8">
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">
@@ -453,6 +511,55 @@ const DayDetailPage = ({ dayNumber: propDayNumber, tripId: propTripId, onClose }
                     journeySymbol={searchDataObj.currency === 'EUR' ? '€' : searchDataObj.currency === 'GBP' ? '£' : searchDataObj.currency === 'INR' ? '₹' : '$'}
                 />
             )}
+            {/* SHARE MODAL */}
+            <AnimatePresence>
+                {shareLink && (
+                    <motion.div
+                        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                        className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-[#1C1916]/40 backdrop-blur-sm"
+                        onClick={() => setShareLink(null)}
+                    >
+                        <motion.div
+                            initial={{ y: 20, scale: 0.95 }} animate={{ y: 0, scale: 1 }} exit={{ y: 20, scale: 0.95 }}
+                            onClick={e => e.stopPropagation()}
+                            className="bg-[#FDFCFA] rounded-3xl w-full max-w-md shadow-2xl overflow-hidden border border-[#E8E4DC]"
+                        >
+                            <div className="p-6 border-b border-[#E8E4DC] relative">
+                                <button onClick={() => setShareLink(null)} className="absolute top-6 right-6 p-2 rounded-full hover:bg-[#F4F1EB] text-[#9C9690] transition-colors">
+                                    <X size={18} />
+                                </button>
+                                <div className="flex items-center gap-3 mb-2">
+                                    <div className="w-10 h-10 rounded-full bg-[#1C1916] flex items-center justify-center text-[#FDFCFA]">
+                                        <Share size={18} />
+                                    </div>
+                                    <div>
+                                        <h3 className="serif-text text-xl text-[#1C1916] font-light">Trip Saved!</h3>
+                                        <p className="text-xs text-[#9C9690]">Copy the link below to access your itinerary anytime.</p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="p-6 bg-[#F4F1EB] space-y-4">
+                                <div className="flex items-center justify-between p-3 bg-[#FDFCFA] border border-[#E8E4DC] rounded-xl overflow-hidden">
+                                    <span className="text-xs font-mono text-[#5A554A] truncate flex-1 select-all">{shareLink}</span>
+                                    <button 
+                                        onClick={copyToClipboard}
+                                        className="ml-3 p-2 bg-[#F4F1EB] hover:bg-[#E8E4DC] rounded-lg transition-colors text-[#1C1916]"
+                                    >
+                                        {copied ? <Check size={16} className="text-[#B89A6A]" /> : <Copy size={16} />}
+                                    </button>
+                                </div>
+                                <button
+                                    onClick={() => setShareLink(null)}
+                                    className="w-full py-3 bg-[#1C1916] hover:bg-[#2E3C3A] text-[#FDFCFA] rounded-xl text-xs font-bold uppercase tracking-widest transition-colors"
+                                >
+                                    Close
+                                </button>
+                            </div>
+                        </motion.div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+
         </motion.div>
     );
 };

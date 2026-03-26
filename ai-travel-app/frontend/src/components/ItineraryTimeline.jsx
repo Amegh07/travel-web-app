@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { MapPin, Navigation, Camera, Utensils, Moon, Sun, Map, Info, X, ExternalLink, ChevronRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
@@ -263,55 +264,62 @@ const ItineraryTimeline = ({ plan, currency = 'INR' }) => {
             </div>
 
             {/* FOOD PLACES MODAL */}
-            <AnimatePresence>
-                {selectedFoodAct && (() => {
-                    const cleanActivityName = selectedFoodAct.activity.replace(/[\p{Emoji_Presentation}\p{Extended_Pictographic}]/gu, '').trim();
-                    const mapsUrl = selectedFoodAct.latitude && selectedFoodAct.longitude
-                        ? `https://www.google.com/maps/search/restaurants/@${selectedFoodAct.latitude},${selectedFoodAct.longitude},15z`
-                        : `https://www.google.com/maps/search/restaurants+near+${encodeURIComponent(cleanActivityName)}`;
-                    return (
-                        <motion.div
-                            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#1C1916]/40 backdrop-blur-sm"
-                            onClick={() => setSelectedFoodAct(null)}
-                        >
+            {createPortal(
+                <AnimatePresence>
+                    {selectedFoodAct && (() => {
+                        const cleanActivityName = selectedFoodAct.activity.replace(/[\p{Emoji_Presentation}\p{Extended_Pictographic}]/gu, '').trim();
+                        const tripDestination = plan?.trip_name?.replace(/[^a-zA-Z\s]/g, '').trim() || '';
+                        const mapsUrl = selectedFoodAct.latitude && selectedFoodAct.longitude
+                            ? `https://www.google.com/maps/search/restaurants/@${selectedFoodAct.latitude},${selectedFoodAct.longitude},15z`
+                            : `https://www.google.com/maps/search/restaurants+near+${encodeURIComponent(tripDestination || cleanActivityName)}`;
+                        return (
                             <motion.div
-                                initial={{ y: 20, scale: 0.95 }} animate={{ y: 0, scale: 1 }} exit={{ y: 20, scale: 0.95 }}
-                                onClick={e => e.stopPropagation()}
-                                className="bg-[#FDFCFA] rounded-3xl w-full max-w-md shadow-2xl overflow-hidden border border-[#E8E4DC]"
+                                initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                                className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-[#1C1916]/40 backdrop-blur-sm"
+                                onClick={() => setSelectedFoodAct(null)}
                             >
-                                <div className="p-6 border-b border-[#E8E4DC] relative">
-                                    <button onClick={() => setSelectedFoodAct(null)} className="absolute top-6 right-6 p-2 rounded-full hover:bg-[#F4F1EB] text-[#9C9690] transition-colors">
-                                        <X size={18} />
-                                    </button>
-                                    <div className="flex items-center gap-3 mb-2">
-                                        <div className="w-10 h-10 rounded-full bg-[#B89A6A]/10 flex items-center justify-center text-[#B89A6A]">
-                                            <Utensils size={18} />
-                                        </div>
-                                        <div>
-                                            <h3 className="serif-text text-xl text-[#1C1916] font-light">Nearby Dining</h3>
-                                            <p className="text-xs text-[#9C9690]">Real restaurants near this location</p>
+                                <motion.div
+                                    initial={{ y: 20, scale: 0.95 }} animate={{ y: 0, scale: 1 }} exit={{ y: 20, scale: 0.95 }}
+                                    onClick={e => e.stopPropagation()}
+                                    className="bg-[#FDFCFA] rounded-3xl w-full max-w-md shadow-2xl overflow-hidden border border-[#E8E4DC]"
+                                >
+                                    <div className="p-6 border-b border-[#E8E4DC] relative">
+                                        <button onClick={() => setSelectedFoodAct(null)} className="absolute top-6 right-6 p-2 rounded-full hover:bg-[#F4F1EB] text-[#9C9690] transition-colors">
+                                            <X size={18} />
+                                        </button>
+                                        <div className="flex items-center gap-3 mb-2">
+                                            <div className="w-10 h-10 rounded-full bg-[#B89A6A]/10 flex items-center justify-center text-[#B89A6A]">
+                                                <Utensils size={18} />
+                                            </div>
+                                            <div>
+                                                <h3 className="serif-text text-xl text-[#1C1916] font-light">Find a Table</h3>
+                                                <p className="text-xs text-[#9C9690]">Search restaurants near this area</p>
+                                            </div>
                                         </div>
                                     </div>
-                                </div>
-                                <div className="p-6 bg-[#F4F1EB]">
-                                    <p className="text-sm text-[#5A554A] mb-5">
-                                        Find real restaurants near <span className="font-semibold text-[#1C1916]">"{selectedFoodAct.activity}"</span> on Google Maps:
-                                    </p>
-                                    <button
-                                        onClick={() => window.open(mapsUrl, '_blank')}
-                                        className="w-full py-3.5 bg-[#1C1916] hover:bg-[#2E3C3A] text-[#FDFCFA] rounded-2xl text-sm font-semibold tracking-wide flex items-center justify-center gap-2 transition-colors"
-                                    >
-                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="3 11 22 2 13 21 11 13 3 11" /></svg>
-                                        Open Restaurants in Maps
-                                    </button>
-                                    <p className="text-center text-[10px] text-[#9C9690] mt-3 tracking-wide">Opens Google Maps · Filtered to restaurants nearby</p>
-                                </div>
+                                    <div className="p-6 bg-[#F4F1EB]">
+                                        <p className="text-sm text-[#5A554A] mb-5">
+                                            Search for restaurants in the area around{' '}
+                                            <span className="font-semibold text-[#1C1916]">
+                                                {cleanActivityName}
+                                            </span>:
+                                        </p>
+                                        <button
+                                            onClick={() => window.open(mapsUrl, '_blank')}
+                                            className="w-full py-3.5 bg-[#1C1916] hover:bg-[#2E3C3A] text-[#FDFCFA] rounded-2xl text-sm font-semibold tracking-wide flex items-center justify-center gap-2 transition-colors"
+                                        >
+                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="3 11 22 2 13 21 11 13 3 11" /></svg>
+                                            Search Nearby Restaurants
+                                        </button>
+                                        <p className="text-center text-[10px] text-[#9C9690] mt-3 tracking-wide">Opens Google Maps · Filtered to restaurants nearby</p>
+                                    </div>
+                                </motion.div>
                             </motion.div>
-                        </motion.div>
-                    );
-                })()}
-            </AnimatePresence>
+                        );
+                    })()}
+                </AnimatePresence>,
+                document.body
+            )}
         </div>
     );
 };

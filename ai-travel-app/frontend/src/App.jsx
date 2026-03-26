@@ -3,6 +3,7 @@ import { Routes, Route } from 'react-router-dom';
 import SearchForm from './components/SearchForm';
 import ResultsPage from './pages/ResultsPage';
 import DayDetailPage from './pages/DayDetailPage';
+import SharedTripPage from './pages/SharedTripPage';
 
 const MainApp = () => {
   const [searchData, setSearchData] = useState(() => {
@@ -72,6 +73,7 @@ const MainApp = () => {
           } />
 
           <Route path="/itinerary/:tripId/day/:dayNumber" element={<DayDetailPage />} />
+          <Route path="/shared/:id" element={<SharedTripPage />} />
         </Routes>
       </div>
     </div>

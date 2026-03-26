@@ -13,6 +13,9 @@ const SearchForm = ({ onSearch, isLoading }) => {
   const [budget, setBudget] = useState(2000);
   const [currency, setCurrency] = useState('INR');
   const [interests, setInterests] = useState([]);
+  const [pax, setPax] = useState(1); // 👥 Passenger count
+  const [vibeLevel, setVibeLevel] = useState(1);
+  const [tripPurpose, setTripPurpose] = useState('holiday');
 
   // ✅ FEATURE: Trip Vibe Tags
   const INTEREST_TAGS = ['Culture', 'Food', 'Nature', 'Adventure', 'Nightlife', 'Shopping'];
@@ -44,7 +47,10 @@ const SearchForm = ({ onSearch, isLoading }) => {
       budget,
       currency,
       interests,
-      tripType
+      vibeLevel,
+      tripPurpose,
+      tripType,
+      pax
     });
   };
 
@@ -141,6 +147,19 @@ const SearchForm = ({ onSearch, isLoading }) => {
                 placeholder="Budget"
               />
             </div>
+            {/* 👥 TRAVELERS INPUT */}
+            <div className="relative group">
+              <span className="absolute left-4 top-[17px] text-[#9C9690] group-focus-within:text-[#B89A6A] z-10 transition-colors text-base select-none">👥</span>
+              <input
+                type="number"
+                min="1"
+                max="10"
+                value={pax}
+                onChange={(e) => setPax(Math.max(1, parseInt(e.target.value) || 1))}
+                className="w-20 pl-10 pr-2 bg-[#F4F1EB] text-[#1C1916] font-medium font-sans text-sm p-4 rounded-2xl border border-[#E8E4DC] focus:ring-2 focus:ring-[#B89A6A]/30 outline-none transition-all text-center"
+                title="Number of travelers"
+              />
+            </div>
           </div>
         </div>
       </div>
@@ -150,7 +169,7 @@ const SearchForm = ({ onSearch, isLoading }) => {
         <label className="text-[10px] font-medium text-[#9C9690] ml-2 tracking-widest uppercase mb-4 flex items-center gap-2">
           <Sparkles size={14} className="text-[#B89A6A]" /> Trip Vibe
         </label>
-        <div className="flex flex-wrap gap-3">
+        <div className="flex flex-wrap gap-3 mb-6">
           {INTEREST_TAGS.map(tag => (
             <button
               key={tag}
@@ -163,6 +182,50 @@ const SearchForm = ({ onSearch, isLoading }) => {
               {tag}
             </button>
           ))}
+        </div>
+        
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Trip Purpose */}
+          <div>
+            <label className="text-[10px] font-medium text-[#9C9690] ml-2 tracking-widest uppercase mb-3 flex items-center gap-2">
+              Trip Purpose
+            </label>
+            <div className="flex bg-[#F4F1EB] p-1.5 rounded-2xl border border-[#E8E4DC]">
+              <button
+                onClick={() => setTripPurpose('holiday')}
+                className={`flex-1 py-2 rounded-xl text-xs tracking-wide uppercase font-medium transition-all ${tripPurpose === 'holiday' ? 'bg-[#1C1916] text-[#FDFCFA] shadow-md' : 'text-[#9C9690] hover:text-[#1C1916]'}`}
+              >
+                Holiday
+              </button>
+              <button
+                onClick={() => setTripPurpose('business')}
+                className={`flex-1 py-2 rounded-xl text-xs tracking-wide uppercase font-medium transition-all ${tripPurpose === 'business' ? 'bg-[#1C1916] text-[#FDFCFA] shadow-md' : 'text-[#9C9690] hover:text-[#1C1916]'}`}
+              >
+                Business
+              </button>
+            </div>
+          </div>
+
+          {/* Vibe Level */}
+          <div>
+            <label className="text-[10px] font-medium text-[#9C9690] ml-2 tracking-widest uppercase mb-3 flex justify-between items-center pr-2">
+              <span>Local Experience Level</span>
+              <span className="text-[#B89A6A] font-bold">Lvl {vibeLevel}</span>
+            </label>
+            <div className="bg-[#F4F1EB] p-3 rounded-2xl border border-[#E8E4DC] flex items-center gap-4">
+              <span className="text-xs text-[#9C9690] w-16 text-right">Tourist</span>
+              <input 
+                type="range" 
+                min="1" 
+                max="3" 
+                step="1" 
+                value={vibeLevel} 
+                onChange={(e) => setVibeLevel(parseInt(e.target.value))}
+                className="flex-1 accent-[#B89A6A] h-1.5 bg-[#E8E4DC] rounded-lg appearance-none cursor-pointer"
+              />
+              <span className="text-xs text-[#1C1916] w-16 font-medium">Local</span>
+            </div>
+          </div>
         </div>
       </div>
 
