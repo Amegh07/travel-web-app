@@ -53,9 +53,8 @@ const getEnvVar = (key) => {
 // Key definitions
 const GROQ_KEYS = [
   { id: "groq-a", key: getEnvVar("GROQ_KEY_A"), roles: [AgentRole.ARCHITECT, AgentRole.MAPPING] },
-  { id: "groq-b", key: getEnvVar("GROQ_KEY_B"), roles: [AgentRole.GUIDE, AgentRole.ROUTER] },
+  { id: "groq-b", key: getEnvVar("GROQ_KEY_B"), roles: [AgentRole.GUIDE, AgentRole.ROUTER, AgentRole.EXTRACTION] },
   { id: "groq-c", key: getEnvVar("GROQ_KEY_C"), roles: [AgentRole.CFO] },
-  { id: "groq-d", key: getEnvVar("GROQ_KEY_D"), roles: [AgentRole.EXTRACTION] },
   { id: "groq-e", key: getEnvVar("GROQ_KEY_E"), roles: [AgentRole.INSPECTOR] },
   { id: "groq-fallback", key: getEnvVar("GROQ_KEY_FALLBACK"), roles: [AgentRole.FALLBACK] },
 ];
@@ -112,8 +111,8 @@ export const keyManager = new KeyManager();
 
 // --- 🛠️ HELPER: AGENT CONFIGURATION ---
 function getAgentConfig(role) {
-  if (role === AgentRole.ARCHITECT || role === AgentRole.MAPPING || role === AgentRole.INSPECTOR) {
-    return { model: ModelConfig.REASONING, temp: 0.5, maxTokens: 8192 };
+  if (role === AgentRole.ARCHITECT || role === AgentRole.MAPPING || role === AgentRole.INSPECTOR || role === AgentRole.EXTRACTION) {
+    return { model: ModelConfig.REASONING, temp: 0.1, maxTokens: 32768 };
   }
   if (role === AgentRole.GUIDE) {
     return { model: ModelConfig.GENERAL, temp: 0.6, maxTokens: 2048 };
@@ -195,6 +194,7 @@ export async function* runAgentStream(role, systemPrompt, userContent, signal = 
     temperature: temp,
     max_tokens: maxTokens,
     stream: true,
+    ...(role === AgentRole.ARCHITECT || role === AgentRole.MAPPING || role === AgentRole.INSPECTOR ? { response_format: { type: "json_object" } } : {})
   };
 
   try {
@@ -217,10 +217,13 @@ export async function* runAgentStream(role, systemPrompt, userContent, signal = 
         const fallbackClient = fallbackKey
           ? new (await import('groq-sdk')).default({ apiKey: fallbackKey, timeout: 300000 })
           : keyManager.getGroqClient(AgentRole.CFO).client;
-        const fallbackModel = fallbackKey ? streamOptions.model : ModelConfig.FAST;
+        // Force downgrade to 8B model. 70B has a 6,000 TPM free-tier limit which kills streams mid-generation.
+        const fallbackModel = ModelConfig.FAST;
         
         console.warn(`♻️ Using ${fallbackKey ? 'dedicated fallback key (new account)' : 'downgraded 8B model'} → [${fallbackModel}]`);
-        const fallbackOptions = { ...streamOptions, model: fallbackModel, max_tokens: 8192 };
+        // Llama 3.3 70B Versatile supports exactly 32768 maximum completion tokens. Llama 3 8B supports 8192.
+        const fallbackTokens = fallbackModel === ModelConfig.REASONING ? 32768 : 8192;
+        const fallbackOptions = { ...streamOptions, model: fallbackModel, max_tokens: fallbackTokens };
         const fallbackStream = await fallbackClient.chat.completions.create(fallbackOptions, { signal });
 
         for await (const chunk of fallbackStream) {

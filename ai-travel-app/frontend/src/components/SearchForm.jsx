@@ -16,6 +16,8 @@ const SearchForm = ({ onSearch, isLoading }) => {
   const [pax, setPax] = useState(1); // 👥 Passenger count
   const [vibeLevel, setVibeLevel] = useState(1);
   const [tripPurpose, setTripPurpose] = useState('holiday');
+  const [groupType, setGroupType] = useState('friends'); // 👨‍👩‍👧 Group dynamics
+  const [dietaryRestriction, setDietaryRestriction] = useState('none'); // 🥗 Dietary needs
 
   // ✅ FEATURE: Trip Vibe Tags
   const INTEREST_TAGS = ['Culture', 'Food', 'Nature', 'Adventure', 'Nightlife', 'Shopping'];
@@ -50,7 +52,9 @@ const SearchForm = ({ onSearch, isLoading }) => {
       vibeLevel,
       tripPurpose,
       tripType,
-      pax
+      pax,
+      groupType,
+      dietaryRestriction
     });
   };
 
@@ -184,8 +188,7 @@ const SearchForm = ({ onSearch, isLoading }) => {
           ))}
         </div>
         
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* Trip Purpose */}
+        {/* Trip Purpose */}
           <div>
             <label className="text-[10px] font-medium text-[#9C9690] ml-2 tracking-widest uppercase mb-3 flex items-center gap-2">
               Trip Purpose
@@ -206,29 +209,53 @@ const SearchForm = ({ onSearch, isLoading }) => {
             </div>
           </div>
 
-          {/* Vibe Level */}
-          <div>
-            <label className="text-[10px] font-medium text-[#9C9690] ml-2 tracking-widest uppercase mb-3 flex justify-between items-center pr-2">
-              <span>Local Experience Level</span>
-              <span className="text-[#B89A6A] font-bold">Lvl {vibeLevel}</span>
-            </label>
-            <div className="bg-[#F4F1EB] p-3 rounded-2xl border border-[#E8E4DC] flex items-center gap-4">
-              <span className="text-xs text-[#9C9690] w-16 text-right">Tourist</span>
-              <input 
-                type="range" 
-                min="1" 
-                max="3" 
-                step="1" 
-                value={vibeLevel} 
-                onChange={(e) => setVibeLevel(parseInt(e.target.value))}
-                className="flex-1 accent-[#B89A6A] h-1.5 bg-[#E8E4DC] rounded-lg appearance-none cursor-pointer"
-              />
-              <span className="text-xs text-[#1C1916] w-16 font-medium">Local</span>
-            </div>
+        {/* Group Type */}
+        <div className="mt-6">
+          <label className="text-[10px] font-medium text-[#9C9690] ml-2 tracking-widest uppercase mb-3 flex items-center gap-2">
+            Group Type
+          </label>
+          <div className="flex flex-wrap gap-2">
+            {[
+              { id: 'solo', label: '🧳 Solo' },
+              { id: 'couple', label: '💑 Couple' },
+              { id: 'family', label: '👨‍👩‍👧 Family' },
+              { id: 'friends', label: '🎉 Friends' },
+              { id: 'seniors', label: '🧓 Seniors' },
+            ].map(g => (
+              <button
+                key={g.id}
+                onClick={() => setGroupType(g.id)}
+                className={`px-4 py-2 rounded-xl text-xs font-medium tracking-wide transition-all border ${
+                  groupType === g.id
+                    ? 'bg-[#1C1916] text-[#FDFCFA] border-[#1C1916] shadow-md'
+                    : 'bg-[#F4F1EB] text-[#9C9690] border-[#E8E4DC] hover:border-[#B89A6A]/50 hover:text-[#1C1916]'
+                }`}
+              >
+                {g.label}
+              </button>
+            ))}
           </div>
         </div>
-      </div>
 
+        {/* Dietary Restriction */}
+        <div className="mt-6">
+          <label className="text-[10px] font-medium text-[#9C9690] ml-2 tracking-widest uppercase mb-3 flex items-center gap-2">
+            Dietary Preferences
+          </label>
+          <select
+            value={dietaryRestriction}
+            onChange={(e) => setDietaryRestriction(e.target.value)}
+            className="w-full bg-[#F4F1EB] text-[#1C1916] text-sm font-medium px-4 py-3 rounded-xl border border-[#E8E4DC] focus:border-[#B89A6A] focus:outline-none transition-all appearance-none cursor-pointer"
+          >
+            <option value="none">No Restrictions</option>
+            <option value="vegetarian">Vegetarian</option>
+            <option value="vegan">Vegan</option>
+            <option value="halal">Halal</option>
+            <option value="gluten-free">Gluten-Free</option>
+            <option value="pescatarian">Pescatarian</option>
+          </select>
+        </div>
+      </div>
       {formError && (
         <div className="mb-6 p-4 rounded-xl bg-red-50 border border-red-100 text-red-600 text-sm font-medium tracking-wide">
           {formError}

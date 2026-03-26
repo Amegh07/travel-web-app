@@ -299,7 +299,7 @@ app.get('/api/hotels', async (req, res) => {
 // --- 🔓 ROUTE 4: AI ARCHITECT (WITH CFO ENGINE + LIVE LIKE A LOCAL) ---
 app.post('/api/itinerary', async (req, res) => {
     try {
-        const { destination, dates, hotel, budget, interests, vibeLevel, tripPurpose, flight, pax } = req.body;
+        const { destination, dates, hotel, budget, interests, vibeLevel, tripPurpose, flight, pax, groupType = 'friends', dietaryRestriction = 'none' } = req.body;
         const numTravelers = Math.max(1, parseInt(pax) || 1);
         const start = new Date(dates?.arrival);
         const end = new Date(dates?.departure);
@@ -311,12 +311,18 @@ app.post('/api/itinerary', async (req, res) => {
         // ✈️ Extract Flight Times for better scheduling
         let flightArrivalStr = "flexible/unknown time";
         let flightDepartureStr = "flexible/unknown time";
+        let flightDurationHours = 0;
         if (flight?.itineraries?.length > 0) {
             // Outbound arrival (last segment of first itinerary)
             const outBound = flight.itineraries[0].segments;
             const arrivalTime = outBound?.[outBound.length - 1]?.arrival?.at;
+            const outboundDepTime = outBound?.[0]?.departure?.at;
             if (arrivalTime) flightArrivalStr = new Date(arrivalTime).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
             
+            if (arrivalTime && outboundDepTime) {
+                flightDurationHours = (new Date(arrivalTime) - new Date(outboundDepTime)) / (1000 * 60 * 60);
+            }
+
             // Inbound departure (first segment of second itinerary, if roundtrip)
             if (flight.itineraries.length > 1) {
                 const inBound = flight.itineraries[1].segments;
@@ -368,10 +374,15 @@ app.post('/api/itinerary', async (req, res) => {
       ═══════════════════════════════════════════════════════════════════════════
       🔒 HARD CONSTRAINTS (VIOLATION = INVALID TRIP)
       ═══════════════════════════════════════════════════════════════════════════
-      1. **Spatial Clustering** – Each day’s activities must reside in a single neighborhood or compact zone. Do not bounce the user across the map in a single day.
-      2. **Pacing & Elegance** – Include EXACTLY 4-5 activities per day. You must fill the entire day from morning to evening.
-      3. **Explicit Interest Matching (CRITICAL)** – You MUST incorporate the user's explicit interests (${interests?.join(', ') || 'Popular Highlights'}) directly into your choices. If they chose "Adventure", there MUST be adventurous activities. If "Food", center the itinerary around culinary experiences. This is a HARD constraint.
-      4. **Premium Description** – Every 'description' must be 2 vivid, sensory-rich sentences. Be evocative but concise.
+      1. **CRITICAL TOKEN CONSTRAINTS (MINIMALISM)** – Output string length must be surgically minimized: 
+         - 'description': Strictly MAX 12 words.
+         - 'reason_for_choice': Strictly MAX 10 words. 
+         - 'dressCodeDetails' (if any): Use only 1-2 words (e.g., 'Casual', 'Formal').
+         - Formatting: Do not use extra whitespace in the JSON. Return a compact block.
+      2. **Spatial Clustering** – Each day’s activities must reside in a single neighborhood or compact zone. Do not bounce the user across the map in a single day.
+      3. **Pacing & Elegance** – Include 4-5 activities per day. You MUST explicitly schedule Breakfast (08:00-09:30), Lunch, and Dinner. Do not exceed 6 activities to conserve tokens. Fill the day efficiently.
+      4. **Explicit Interest Matching (CRITICAL)** – You MUST incorporate the user's explicit interests (${interests?.join(', ') || 'Popular Highlights'}) directly into your choices. This is a HARD constraint.
+      5. **Premium Description** – Every 'description' must be vivid and sensory-rich, but strictly obey the 12-word limit.
       5. **Budget Exactitude** – Sum of all 'cost_estimate' fields MUST NOT exceed ${currency} ${availableToSpend}. Be realistic with pricing.
       6. **Time-of-Day Intelligence (CRITICAL — THINK BEFORE YOU SCHEDULE)** – You MUST apply real-world common sense to EVERY activity's time slot. Violating this makes the itinerary useless.
          MANDATORY TIME RULES (non-negotiable):
@@ -393,13 +404,20 @@ app.post('/api/itinerary', async (req, res) => {
       9. **Transit Instructions** – Provide highly specific, realistic transit instructions (e.g., "Take a 10-minute Uber", "Walk 15 minutes east down the tree-lined promenade").
       10. **Emojis** – Use ACTUAL emoji characters (like 🍷 or 🏛️). DO NOT use unicode escape sequences.
       11. **Real Establishments Only** – NEVER use generic names like "Local Restaurant" or "Local Cafe". You MUST provide the exact, real-world name of a specific establishment that exists on Google Maps (e.g., "Pujol", "Cafe de Flore").
-      12. **Mandatory Basecamp** – You MUST incorporate the "Selected Hotel" above. Day 1 MUST include an explicit "Check-in at [Hotel Name]" activity. The geographic clustering of every day MUST revolve logically around this specific hotel's location.
-      13. **Flight Schedule Alignment** – Day 1 activities MUST begin AFTER the ${flightArrivalStr} arrival (factor in transit/hotel check-in). The Final Day activities MUST conclude well BEFORE the ${flightDepartureStr} departure flight to allow for airport transit.
+      12. **Mandatory Basecamp** – The user's basecamp is ${hotel?.name || 'the selected hotel'}. Day 1 MUST include an explicit arrival at this hotel. The geographic clustering of every day MUST revolve logically around this specific hotel's location. All daily itineraries must logically terminate near this location.
+      13. **Flight Schedule Alignment** – Day 1 activities MUST begin AFTER the ${flightArrivalStr} arrival (factor in transit to hotel). The Final Day activities MUST conclude well BEFORE the ${flightDepartureStr} departure flight to allow for airport transit.
       14. **Transit Buffers (NON-NEGOTIABLE)** — After EVERY activity, you MUST insert a minimum 30-minute gap before the next activity starts. If Activity A ends at 14:00, Activity B cannot start before 14:30. No exceptions. If the activity has a transit_instruction, the gap must be at least as long as the transit time mentioned.
-      15. **Luggage Logic** — If the flight arrival time (${flightArrivalStr}) is before 15:00, the VERY FIRST activity on Day 1 MUST be: activity: "Drop luggage at hotel front desk 🧳", type: "logistics", cost_estimate: 0, description: "Head straight to your hotel from the airport to drop your bags before check-in opens. The concierge will store them safely so you can explore hands-free.", time: [30 minutes after arrival]. Do NOT schedule any museum, tour, or paid attraction until this luggage drop activity appears first.
-      16. **Geographic Clustering (STRICT)** — Each day must be confined to ONE named neighborhood or district of ${destName}. State the district in the day theme (e.g., "🗺️ Le Marais & Bastille"). Activities must be walkable or within a single Metro line of each other. NEVER place two activities on opposite sides of the city in the same day.
+      15. **Luggage & Early Check-In Logic** — Standard hotel check-in is 14:00. If the flight arrival time (${flightArrivalStr}) is before 14:00, the VERY FIRST activity on Day 1 MUST be: "Drop luggage at ${hotel?.name || 'hotel'} concierge" (and DO NOT schedule a second "Check-in" activity later that day). If arriving after 14:00, the first activity should simply be "Check-in at ${hotel?.name || 'hotel'}".
+      16. **Geographic Clustering (STRICT)** — Cluster daily activities geographically (within a ~3 to 5 km radius) of ${destName}. State the general district in the day theme. Cross-city travel is only permitted once per day for a major transition, such as returning to the hotel or a specific dinner reservation.
+      17. **Transit-Aware Scheduling (NON-NEGOTIABLE)** — Every activity MUST include a "transitToNext" object that calculates how the traveler physically moves to the NEXT activity. Specify the transport method (e.g., "Walk", "Subway", "Taxi") and the realistic travel time in minutes. For the last activity of each day, use method: "Return to hotel" and estimate the time back.
+          CHRONOLOGICAL SYNC: The 'time' of any activity MUST equal the 'time' of the previous activity PLUS its logical duration PLUS the 'transitToNext.estimatedMinutes'.
+      18. **DYNAMIC PACING & FATIGUE** — You must pace the itinerary to prevent traveler burnout. 
+          1. Define 'High-Energy' activities as steep hikes, long museum tours (>2 hours), or intense physical sports. Cap these at 2 per FULL day. 
+          2. For every FULL travel day (excluding arrival/departure days where time is limited), you must schedule a 'Rest/Cafe Block' in the mid-afternoon. 
+          3. Scale this rest block based on the group: 30-45 minutes for Solo/Couples, and 60-90 minutes for Families/Seniors.
+      19. **Native Transit Only (LAST MILE RULE)** — CRITICAL TRANSIT RULE: Suggest the most practical, budget-appropriate native transit. Do not suggest expensive tourist-novelty transit (like horse carriages) for logistical point-A-to-point-B travel.
 
-      REQUIRED JSON SCHEMA: {"trip_name":"Catchy trip title","daily_plan":[{"day":1,"date":"YYYY-MM-DD","theme":"🎨 Day theme","activities":[{"time":"HH:MM","activity":"Real place name 🗺️","type":"food|sightseeing|logistics","cost_estimate":0,"description":"Two vivid sentences describing the experience.","reason_for_choice":"Why this place is unmissable.","transit_instruction":"Specific transit instruction.","localness_signal":0.5,"latitude":0.0,"longitude":0.0}]}]}
+      REQUIRED JSON SCHEMA: {"trip_name":"Catchy trip title","daily_plan":[{"day":1,"date":"YYYY-MM-DD","theme":"🎨 Day theme","activities":[{"time":"HH:MM","activity":"Real place name 🗺️","type":"food|sightseeing|logistics","cost_estimate":0,"description":"Two vivid sentences describing the experience.","reason_for_choice":"Why this place is unmissable.","transit_instruction":"Specific transit instruction.","transitToNext":{"method":"Walk / Subway / Taxi","estimatedMinutes":15},"dressCodeRequired":true,"dressCodeDetails":"e.g., Shoulders covered, or null if none","localness_signal":0.5,"latitude":0.0,"longitude":0.0}]}]}
       Follow this schema exactly for ALL ${daysCount} days. Output RAW JSON ONLY — no Markdown, no code blocks. Start exactly with { and end exactly with }.`;
 
         // 👥 4a. INJECT GROUP / PAX CONTEXT
@@ -413,13 +431,45 @@ app.post('/api/itinerary', async (req, res) => {
         - Mention group-friendly venues (e.g., large tables, group booking available) where relevant.`;
         }
 
+        // 🧑‍🤝‍🧑 4b. GROUP DYNAMICS ENGINE
+        const groupDynamicsMap = {
+            solo:    'a SOLO traveler. Emphasize self-guided activities, quiet cafes, independent exploration, and personal safety tips.',
+            couple:  'a COUPLE. Emphasize romantic settings, intimate restaurants, scenic walks, and experiences built for two.',
+            family:  'a FAMILY with children. Include major landmarks but explicitly suggest accessibility-friendly adaptations (e.g., "Take the elevator to the 2nd floor instead of the stairs") and reduce the daily walking pace by 30%.',
+            friends: 'a GROUP OF FRIENDS. Emphasize social experiences — group dining, nightlife options, adventure activities, and experiences that work well for groups of 3 or more.',
+            seniors: 'SENIOR TRAVELERS. Include major landmarks but explicitly suggest accessibility-friendly adaptations (e.g., "Take the elevator") and reduce the daily walking pace by 30%.',
+        };
+        const groupContext = groupDynamicsMap[groupType] || groupDynamicsMap['friends'];
+        systemPrompt += `\n\nGROUP DYNAMICS CONSTRAINT (NON-NEGOTIABLE):
+        - The current travel party is ${groupContext}
+        - Every activity in every day MUST be appropriate and realistic for this group.
+        - If the group is a Family or Seniors, explicitly call out any access or mobility considerations in the activity description.`;
+
         // 📊 4b. INJECT CFO RULES
         systemPrompt += `\n\nFINANCIAL CONSTRAINTS (CFO ENGINE):
         - The user has a STRICT remaining budget of ${currency} ${totalRemaining} for the entire trip (excluding flights/hotels).
         - The average daily allowance is ${currency} ${dailyAllowance}.
         - DO NOT exceed the total remaining budget.
         - Provide realistic \`cost_estimate\` numbers in ${currency} for EVERY activity.
-        - Distribute the budget contextually (e.g., Day 1 might use 10% of the budget, Day 3 might use 40% for an adventure). Use your discretion to make the math work without going over ${currency} ${totalRemaining}.`;
+        - Do not attempt to subtract costs from the total budget in your text fields. Simply estimate the local cost in the destination's native currency (e.g., '${currency} 20') and leave the global budgeting math to the user's interface.`;
+
+        // 🥗 4c. DIETARY RESTRICTION ENGINE
+        if (dietaryRestriction && dietaryRestriction !== 'none') {
+            systemPrompt += `\n\nDIETARY CONSTRAINT (NON-NEGOTIABLE):
+        - The user has a ${dietaryRestriction} requirement.
+        - Prioritize ${dietaryRestriction} restaurants. If unavailable in the specific geographic cluster, select highly-rated general restaurants that explicitly offer strong ${dietaryRestriction} menus.`;
+        }
+
+        // 🛬 4c. JET LAG / LONG-HAUL RECOVERY ENGINE
+        const outboundDepTime = flight?.itineraries?.[0]?.segments?.[0]?.departure?.at;
+        const isOvernight = outboundDepTime ? (new Date(outboundDepTime).getHours() >= 18) : false;
+        
+        if (flightDurationHours > 7 && isOvernight) {
+            systemPrompt += `\n\nJET LAG DELUSION CONSTRAINT (NON-NEGOTIABLE):
+        - The user is arriving after an overnight long-haul flight.
+        - Day 1 MUST be designated as a 'Recovery Day'.
+        - Keep all Day 1 activities extremely light, close to the hotel, and highly flexible (e.g., leisurely parks, a casual local dinner, no early morning pre-booked tours).`;
+        }
 
         // 🚨 5. INJECT SURVIVAL MODE
         if (isSurvivalMode) {
@@ -494,6 +544,12 @@ app.post('/api/itinerary', async (req, res) => {
             description: z.string(),
             reason_for_choice: z.string(),
             transit_instruction: z.string().optional().nullable(),
+            transitToNext: z.object({
+                method: z.string(),
+                estimatedMinutes: z.number()
+            }).optional().nullable(),
+            dressCodeRequired: z.boolean().optional().nullable(),
+            dressCodeDetails: z.string().optional().nullable(),
             localness_signal: z.number().optional().nullable(),
             latitude: z.number().optional().nullable(),
             longitude: z.number().optional().nullable()

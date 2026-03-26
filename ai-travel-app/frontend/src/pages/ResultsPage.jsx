@@ -72,7 +72,7 @@ const CheckoutBar = ({ flight, hotel, currencySymbol, nights, originName, pax = 
                             const origin = firstSeg?.departure?.iataCode || '';
                             const dest = lastSeg?.arrival?.iataCode || '';
                             const dateObj = new Date(firstSeg?.departure?.at || arrivalDate);
-                            const skyscannerDate = `${String(dateObj.getDate()).padStart(2,'0')}${String(dateObj.getMonth()+1).padStart(2,'0')}${String(dateObj.getFullYear()).slice(-2)}`;
+                            const skyscannerDate = `${String(dateObj.getDate()).padStart(2, '0')}${String(dateObj.getMonth() + 1).padStart(2, '0')}${String(dateObj.getFullYear()).slice(-2)}`;
                             window.open(
                                 `https://www.skyscanner.co.in/transport/flights/${origin}/${dest}/${skyscannerDate}/?adults=${pax}`,
                                 '_blank'
@@ -144,15 +144,15 @@ const FlightCard = ({ flight, isSelected, onSelect, showBook = false, pax = 1, a
                     <div className="serif-text text-3xl font-light text-[#1C1916] tracking-tight">{(flight.price?.currency === 'INR' ? '₹' : flight.price?.currency === 'EUR' ? '€' : flight.price?.currency === 'GBP' ? '£' : '$')} {parseFloat(flight.price?.total || 0).toFixed(2)}</div>
                     {showBook && (
                         <button
-                            onClick={(e) => { 
-                                e.stopPropagation(); 
+                            onClick={(e) => {
+                                e.stopPropagation();
                                 const outbound = flight.itineraries?.[0];
                                 const firstSeg = outbound?.segments?.[0];
                                 const lastSeg = outbound?.segments?.[outbound.segments.length - 1];
                                 const origin = firstSeg?.departure?.iataCode || '';
                                 const dest = lastSeg?.arrival?.iataCode || '';
                                 const dateObj = new Date(firstSeg?.departure?.at || arrivalDate);
-                                const skyscannerDate = `${String(dateObj.getDate()).padStart(2,'0')}${String(dateObj.getMonth()+1).padStart(2,'0')}${String(dateObj.getFullYear()).slice(-2)}`;
+                                const skyscannerDate = `${String(dateObj.getDate()).padStart(2, '0')}${String(dateObj.getMonth() + 1).padStart(2, '0')}${String(dateObj.getFullYear()).slice(-2)}`;
                                 window.open(
                                     `https://www.skyscanner.co.in/transport/flights/${origin}/${dest}/${skyscannerDate}/?adults=${pax}`,
                                     '_blank'
@@ -539,6 +539,7 @@ const ResultsPage = ({ searchData, onBack }) => {
     const [aiItinerary, setAiItinerary] = useState(() => initialCache.aiItinerary || null);
     const [aiError, setAiError] = useState(null);
     const [plannerLoading, setPlannerLoading] = useState(false);
+    const [isThinking, setIsThinking] = useState(false);
 
     // Save & Share State
     const [isSaving, setIsSaving] = useState(false);
@@ -578,7 +579,7 @@ const ResultsPage = ({ searchData, onBack }) => {
         try {
             const cache = localStorage.getItem('travex_results_cache');
             const searchDataStr = sessionStorage.getItem('travex_search') || localStorage.getItem('travex_search');
-            
+
             const payload = {
                 searchData: searchDataStr ? JSON.parse(searchDataStr) : searchData,
                 resultsData: cache ? JSON.parse(cache) : {}
@@ -590,7 +591,7 @@ const ResultsPage = ({ searchData, onBack }) => {
                 body: JSON.stringify(payload)
             });
             const data = await response.json();
-            
+
             if (data.id) {
                 const url = `${window.location.origin}/shared/${data.id}`;
                 setShareLink(url);
@@ -751,6 +752,7 @@ const ResultsPage = ({ searchData, onBack }) => {
         console.log("🚀 startStream: flight", flight.id, "hotel", hotel.id);
         plannerHasFired.current = true;
         setPlannerLoading(true);
+        setIsThinking(true);
         setBridgeLoading(true);
         setAiError(null);
 
@@ -784,15 +786,14 @@ const ResultsPage = ({ searchData, onBack }) => {
             if (firstBrace !== -1 && lastBrace !== -1 && lastBrace >= firstBrace) {
                 cleaned = cleaned.substring(firstBrace, lastBrace + 1);
             }
-            
             try { return JSON.parse(cleaned); } catch {
                 try {
                     let c = cleaned.replace(/,\s*$/, '');
-                    const ob = (c.match(/\{/g)||[]).length - (c.match(/\}/g)||[]).length;
-                    const obk = (c.match(/\[/g)||[]).length - (c.match(/\]/g)||[]).length;
+                    const ob = (c.match(/\{/g) || []).length - (c.match(/\}/g) || []).length;
+                    const obk = (c.match(/\[/g) || []).length - (c.match(/\]/g) || []).length;
                     if (c.endsWith('"')) c += '"';
-                    for (let i=0;i<obk;i++) c+=']';
-                    for (let i=0;i<ob;i++) c+='}';
+                    for (let i = 0; i < obk; i++) c += ']';
+                    for (let i = 0; i < ob; i++) c += '}';
                     return JSON.parse(c);
                 } catch (e) { return null; }
             }
@@ -802,6 +803,7 @@ const ResultsPage = ({ searchData, onBack }) => {
 
         fetchItineraryStream(payload,
             (chunk) => {
+                setIsThinking(prev => prev ? false : prev);
                 accumulated += chunk;
                 const p = tryParsePartialJSON(accumulated);
                 if (p?.daily_plan) setAiItinerary(p);
@@ -814,21 +816,21 @@ const ResultsPage = ({ searchData, onBack }) => {
                 console.log("⚠️ Backend triggered retry (JSON validation failed). Resetting stream buffer.");
                 accumulated = "";
                 setAiItinerary(null);
+                setIsThinking(true);
             },
             controller.signal
         ).then(() => {
             if (accumulated.trim()) {
-                try { 
+                try {
                     let cleaned = accumulated.trim();
                     const firstBrace = cleaned.indexOf('{');
                     const lastBrace = cleaned.lastIndexOf('}');
                     if (firstBrace !== -1 && lastBrace !== -1 && lastBrace >= firstBrace) {
                         cleaned = cleaned.substring(firstBrace, lastBrace + 1);
                     }
-                    const f = JSON.parse(cleaned); 
-                    if (f?.daily_plan) setAiItinerary(f); 
-                }
-                catch (e) {
+                    const f = JSON.parse(cleaned);
+                    if (f?.daily_plan) setAiItinerary(f);
+                } catch (e) {
                     console.error(`❌ Final JSON parse failed (buffer: ${accumulated.length} chars). Error:`, e);
                     console.debug("🔍 Raw accumulated buffer (last 300 chars):", accumulated.slice(-300));
                 }
@@ -841,6 +843,7 @@ const ResultsPage = ({ searchData, onBack }) => {
         }).finally(() => {
             isStreamingRef.current = false;
             setPlannerLoading(false);
+            setIsThinking(false);
             setTimeout(() => {
                 setMiniMapData({
                     origin: `${flight?.validatingAirlineCodes?.[0] || 'Airline'} Terminal`,
@@ -884,16 +887,16 @@ const ResultsPage = ({ searchData, onBack }) => {
 
     return (
         <div className="selection:bg-[#B89A6A]/20 pb-16 font-sans bg-[#F4F1EB] text-[#1C1916] min-h-screen">
-            <ChatBot 
-                destination={destName} 
-                aiItinerary={aiItinerary} 
-                setAiItinerary={(updated) => setAiItinerary({ ...updated })} 
-                hotels={hotels} 
-                transport={transport} 
+            <ChatBot
+                destination={destName}
+                aiItinerary={aiItinerary}
+                setAiItinerary={(updated) => setAiItinerary({ ...updated })}
+                hotels={hotels}
+                transport={transport}
                 events={events}
-                journeySymbol={journeySymbol} 
-                onSelectHotel={toggleHotel} 
-                onSelectFlight={toggleFlight} 
+                journeySymbol={journeySymbol}
+                onSelectHotel={toggleHotel}
+                onSelectFlight={toggleFlight}
                 onToggleEvent={toggleEvent}
             />
 
@@ -940,8 +943,8 @@ const ResultsPage = ({ searchData, onBack }) => {
 
                             {aiItinerary && (
                                 <div className="absolute top-8 right-8">
-                                    <button 
-                                        onClick={handleSaveTrip} 
+                                    <button
+                                        onClick={handleSaveTrip}
                                         disabled={isSaving}
                                         className={`px-5 py-2.5 rounded-full flex items-center gap-2 transition-all text-sm font-medium tracking-wide shadow-lg border ${isSaving ? 'bg-[#FDFCFA]/50 text-[#9C9690] border-transparent cursor-not-allowed' : 'bg-[#1C1916] text-[#FDFCFA] hover:bg-[#2E3C3A] border-[#1C1916]'}`}
                                     >
@@ -1082,10 +1085,22 @@ const ResultsPage = ({ searchData, onBack }) => {
                         {!aiItinerary ? (
                             <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-8">
                                 {plannerLoading ? (
-                                    <div className="flex flex-col items-center gap-4">
-                                        <Loader2 className="animate-spin text-[#B89A6A]" size={48} />
-                                        <p className="serif-text text-2xl font-light text-[#1C1916] tracking-tight animate-pulse">Personalising your journey...</p>
-                                    </div>
+                                    isThinking ? (
+                                        <div className="flex flex-col items-center justify-center p-10 space-y-4 animate-pulse">
+                                            <div className="w-12 h-12 border-4 border-[#B89A6A] border-t-transparent rounded-full animate-spin"></div>
+                                            <div className="text-center">
+                                                <h3 className="serif-text text-2xl font-light text-[#1C1916]">AI is Architecting your trip...</h3>
+                                                <p className="text-sm text-[#9C9690] mt-2 max-w-sm tracking-wide">
+                                                    Calculating transit times, checking budget limits, and avoiding traveler fatigue.
+                                                </p>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <div className="flex flex-col items-center gap-4">
+                                            <Loader2 className="animate-spin text-[#B89A6A]" size={48} />
+                                            <p className="serif-text text-2xl font-light text-[#1C1916] tracking-tight animate-pulse">Streaming Itinerary...</p>
+                                        </div>
+                                    )
                                 ) : aiError ? (
                                     <div className="flex flex-col items-center gap-4">
                                         <div className="w-14 h-14 rounded-full bg-[#F4F1EB] border border-[#E8E4DC] flex items-center justify-center">
@@ -1162,7 +1177,7 @@ const ResultsPage = ({ searchData, onBack }) => {
                             <div className="p-6 bg-[#F4F1EB] space-y-4">
                                 <div className="flex items-center justify-between p-3 bg-[#FDFCFA] border border-[#E8E4DC] rounded-xl overflow-hidden">
                                     <span className="text-xs font-mono text-[#5A554A] truncate flex-1 select-all">{shareLink}</span>
-                                    <button 
+                                    <button
                                         onClick={copyToClipboard}
                                         className="ml-3 p-2 bg-[#F4F1EB] hover:bg-[#E8E4DC] rounded-lg transition-colors text-[#1C1916]"
                                     >

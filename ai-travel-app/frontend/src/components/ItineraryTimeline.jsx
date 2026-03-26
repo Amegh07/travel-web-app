@@ -91,7 +91,7 @@ const ItineraryTimeline = ({ plan, currency = 'INR' }) => {
                         const dayMapsUrl = buildDayMapsUrl(day.activities || []);
 
                         return (
-                            <div key={dayIndex} className="relative pl-8">
+                            <div key={`day-${dayIndex}`} className="relative pl-8">
                                 <div className="absolute -left-[5px] top-1 w-[11px] h-[11px] rounded-full bg-[#B89A6A] border-2 border-[#F4F1EB] shadow-sm" />
 
                                 {/* Day header */}
@@ -133,8 +133,8 @@ const ItineraryTimeline = ({ plan, currency = 'INR' }) => {
                                             const actMapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(`${cleanActivityName}, ${itinerary.trip_name || ''}`)}`;
 
                                             return (
+                                                <div key={`day-${dayIndex}-act-${actIndex}`}>
                                                 <motion.div
-                                                    key={actIndex}
                                                     initial={{ opacity: 0, y: 8 }}
                                                     animate={{ opacity: 1, y: 0 }}
                                                     exit={{ opacity: 0, height: 0, overflow: 'hidden' }}
@@ -200,6 +200,15 @@ const ItineraryTimeline = ({ plan, currency = 'INR' }) => {
                                                             </div>
                                                         )}
 
+                                                        {/* Dress Code Warning */}
+                                                        {act.dressCodeRequired && act.dressCodeDetails && !['none', 'null', 'n/a'].includes(act.dressCodeDetails.toLowerCase().trim()) && (
+                                                            <div className="mt-2 block w-fit items-center gap-1 px-2.5 py-1 bg-amber-50 border border-amber-200/50 rounded-md">
+                                                                <span className="text-[10px] font-bold text-amber-700 tracking-wide flex items-center gap-1.5">
+                                                                    ⚠️ Dress Code: <span className="font-medium text-amber-800">{act.dressCodeDetails}</span>
+                                                                </span>
+                                                            </div>
+                                                        )}
+
                                                         {/* Cost chip & Extras */}
                                                         <div className="mt-2.5 flex items-center gap-2 flex-wrap">
                                                             {(act.cost_estimate > 0) && (
@@ -243,6 +252,8 @@ const ItineraryTimeline = ({ plan, currency = 'INR' }) => {
                                                         )}
                                                     </div>
                                                 </motion.div>
+
+                                                </div>
                                             );
                                         })}
                                     </AnimatePresence>
