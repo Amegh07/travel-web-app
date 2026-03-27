@@ -4,8 +4,9 @@ import {
     Ticket, MapPin, X, CheckCircle, ExternalLink, Navigation, Star, ChevronDown, Globe,
     Music, Utensils, Moon, Camera, Heart, Share, Copy, Check
 } from 'lucide-react';
-import { searchAll, fetchItineraryStream } from '../services/api';
+import { searchAll, fetchItineraryStream, API_BASE } from '../services/api';
 import ItineraryTimeline from '../components/ItineraryTimeline';
+import { healItinerary } from '../utils/healer';
 import ChatBot from '../components/ChatBot';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -530,6 +531,9 @@ const ResultsPage = ({ searchData, onBack }) => {
     const [isHotelModalOpen, setIsHotelModalOpen] = useState(false);
     const [isEventModalOpen, setIsEventModalOpen] = useState(false);
 
+    const [showAllHotels, setShowAllHotels] = useState(false);
+    const hotelsSectionRef = useRef(null);
+
     // 🔒 AI STATE
     const [confirmedFlight, setConfirmedFlight] = useState(() => initialCache.confirmedFlight || null);
     const [confirmedHotel, setConfirmedHotel] = useState(() => initialCache.confirmedHotel || null);
@@ -540,6 +544,7 @@ const ResultsPage = ({ searchData, onBack }) => {
     const [aiError, setAiError] = useState(null);
     const [plannerLoading, setPlannerLoading] = useState(false);
     const [isThinking, setIsThinking] = useState(false);
+    const [isRefining, setIsRefining] = useState(false);
 
     // Save & Share State
     const [isSaving, setIsSaving] = useState(false);
@@ -550,6 +555,12 @@ const ResultsPage = ({ searchData, onBack }) => {
     const plannerHasFired = useRef(false);
     const abortControllerRef = useRef(null);
     const isStreamingRef = useRef(false);
+    const isMountedStore = useRef(true);
+
+    useEffect(() => {
+        isMountedStore.current = true;
+        return () => { isMountedStore.current = false; };
+    }, []);
 
     useEffect(() => {
         if (isFlightModalOpen || isHotelModalOpen || isEventModalOpen) document.body.style.overflow = 'hidden';
@@ -580,12 +591,18 @@ const ResultsPage = ({ searchData, onBack }) => {
             const cache = localStorage.getItem('travex_results_cache');
             const searchDataStr = sessionStorage.getItem('travex_search') || localStorage.getItem('travex_search');
 
+            let parsedSearchData = searchData;
+            try { if (searchDataStr) parsedSearchData = JSON.parse(searchDataStr); } catch (e) { console.error('Silent JSON parse fail on searchData', e); }
+
+            let parsedResultsData = {};
+            try { if (cache) parsedResultsData = JSON.parse(cache); } catch (e) { console.error('Silent JSON parse fail on cache', e); }
+
             const payload = {
-                searchData: searchDataStr ? JSON.parse(searchDataStr) : searchData,
-                resultsData: cache ? JSON.parse(cache) : {}
+                searchData: parsedSearchData,
+                resultsData: parsedResultsData
             };
 
-            const response = await fetch('http://localhost:5000/api/save-trip', {
+            const response = await fetch(`${API_BASE}/api/save-trip`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
@@ -821,19 +838,25 @@ const ResultsPage = ({ searchData, onBack }) => {
             controller.signal
         ).then(() => {
             if (accumulated.trim()) {
-                try {
-                    let cleaned = accumulated.trim();
-                    const firstBrace = cleaned.indexOf('{');
-                    const lastBrace = cleaned.lastIndexOf('}');
-                    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace >= firstBrace) {
-                        cleaned = cleaned.substring(firstBrace, lastBrace + 1);
+                setIsRefining(true);
+                setTimeout(() => {
+                    try {
+                        let cleaned = accumulated.trim();
+                        const firstBrace = cleaned.indexOf('{');
+                        const lastBrace = cleaned.lastIndexOf('}');
+                        if (firstBrace !== -1 && lastBrace !== -1 && lastBrace >= firstBrace) {
+                            cleaned = cleaned.substring(firstBrace, lastBrace + 1);
+                        }
+                        const f = JSON.parse(cleaned);
+                        const healedData = healItinerary(f, parseFloat(searchData?.budget || 2000));
+                        if (healedData?.daily_plan) setAiItinerary(healedData);
+                    } catch (e) {
+                        console.error(`❌ Final JSON parse failed (buffer: ${accumulated.length} chars). Error:`, e);
+                        console.debug("🔍 Raw accumulated buffer (last 300 chars):", accumulated.slice(-300));
+                    } finally {
+                        setIsRefining(false);
                     }
-                    const f = JSON.parse(cleaned);
-                    if (f?.daily_plan) setAiItinerary(f);
-                } catch (e) {
-                    console.error(`❌ Final JSON parse failed (buffer: ${accumulated.length} chars). Error:`, e);
-                    console.debug("🔍 Raw accumulated buffer (last 300 chars):", accumulated.slice(-300));
-                }
+                }, 800);
             }
         }).catch((err) => {
             if (err?.name !== 'AbortError') {
@@ -845,6 +868,7 @@ const ResultsPage = ({ searchData, onBack }) => {
             setPlannerLoading(false);
             setIsThinking(false);
             setTimeout(() => {
+                if (!isMountedStore.current) return;
                 setMiniMapData({
                     origin: `${flight?.validatingAirlineCodes?.[0] || 'Airline'} Terminal`,
                     destination: hotel?.name || 'Your Hotel',
@@ -881,7 +905,7 @@ const ResultsPage = ({ searchData, onBack }) => {
         return [...hotels].sort((a, b) => {
             if (confirmedHotel?.id === a.id) return -1;
             if (confirmedHotel?.id === b.id) return 1;
-            return 0;
+            return parseFloat(b.rating || 0) - parseFloat(a.rating || 0);
         });
     }, [hotels, confirmedHotel?.id]);
 
@@ -1045,7 +1069,7 @@ const ResultsPage = ({ searchData, onBack }) => {
                     </div>
 
                     {/* HOTELS */}
-                    <div className="bg-[#FDFCFA] shadow-[0_1px_4px_rgba(28,25,22,0.05)] border border-[#E8E4DC] rounded-3xl p-8">
+                    <div ref={hotelsSectionRef} className="bg-[#FDFCFA] shadow-[0_1px_4px_rgba(28,25,22,0.05)] border border-[#E8E4DC] rounded-3xl p-8 transition-all duration-300 scroll-mt-24">
                         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
                             <div className="flex items-center gap-3">
                                 <div className="p-2.5 bg-[#F4F1EB] rounded-xl border border-[#E8E4DC]"><Hotel className="w-5 h-5 text-[#2E3C3A]" /></div>
@@ -1054,11 +1078,23 @@ const ResultsPage = ({ searchData, onBack }) => {
                         </div>
 
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-                            {sortedHotels.slice(0, 3).map((h, i) => <HotelCard key={i} hotel={h} nights={nights} isSelected={confirmedHotel?.id === h.id} onSelect={toggleHotel} />)}
+                            {sortedHotels.slice(0, showAllHotels ? 13 : 3).map((h, i) => <HotelCard key={i} hotel={h} nights={nights} isSelected={confirmedHotel?.id === h.id} onSelect={toggleHotel} />)}
                         </div>
-                        <button onClick={() => setIsHotelModalOpen(true)} className="w-full mt-6 py-4 rounded-xl border border-dashed border-[#E8E4DC] text-[#9C9690] hover:text-[#1C1916] hover:border-[#B89A6A]/50 bg-[#FDFCFA] transition-all text-[10px] tracking-widest uppercase font-medium flex items-center justify-center gap-2">
-                            View all {sortedHotels.length} hotels <ChevronDown className="w-4 h-4" />
-                        </button>
+                        
+                        {sortedHotels.length > 3 && (
+                            <button 
+                                onClick={() => {
+                                    const nextState = !showAllHotels;
+                                    setShowAllHotels(nextState);
+                                    if (nextState && hotelsSectionRef.current) {
+                                        hotelsSectionRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                                    }
+                                }} 
+                                className="w-full mt-6 py-4 rounded-xl border border-dashed border-[#E8E4DC] text-[#9C9690] hover:text-[#1C1916] hover:border-[#B89A6A]/50 bg-[#FDFCFA] transition-all text-[10px] tracking-widest uppercase font-medium flex items-center justify-center gap-2"
+                            >
+                                {showAllHotels ? 'Show fewer hotels' : `View ${Math.min(10, sortedHotels.length - 3)} more top rated hotels`} <ChevronDown className={`w-4 h-4 transition-transform ${showAllHotels ? 'rotate-180' : ''}`} />
+                            </button>
+                        )}
                     </div>
 
                     {/* EVENTS */}
@@ -1124,11 +1160,29 @@ const ResultsPage = ({ searchData, onBack }) => {
                             </div>
                         ) : (
                             <div>
-                                <div className="flex items-center gap-3 mb-8">
-                                    <div className="p-2.5 bg-[#F4F1EB] rounded-xl border border-[#E8E4DC]"><Calendar className="w-5 h-5 text-[#2E3C3A]" /></div>
-                                    <h2 className="serif-text text-3xl font-light text-[#1C1916] tracking-tight">Your Daily Itinerary</h2>
-                                </div>
-                                <ItineraryTimeline plan={aiItinerary} />
+                                {isRefining ? (
+                                    <div className="flex flex-col items-center justify-center p-12 space-y-4 animate-fade-in min-h-[400px]">
+                                        <div className="relative">
+                                            <div className="absolute inset-0 border-4 border-[#B89A6A]/30 rounded-full animate-ping"></div>
+                                            <div className="w-16 h-16 border-4 border-[#B89A6A] border-t-transparent rounded-full animate-spin"></div>
+                                            <span className="absolute inset-0 flex items-center justify-center text-xl">✨</span>
+                                        </div>
+                                        <div className="text-center">
+                                            <h3 className="serif-text text-2xl font-light text-[#1C1916]">Refining Itinerary...</h3>
+                                            <p className="text-sm text-[#9C9690] mt-2 max-w-sm tracking-wide animate-pulse">
+                                                Applying logical constraints and calculating budget.
+                                            </p>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <>
+                                        <div className="flex items-center gap-3 mb-8">
+                                            <div className="p-2.5 bg-[#F4F1EB] rounded-xl border border-[#E8E4DC]"><Calendar className="w-5 h-5 text-[#2E3C3A]" /></div>
+                                            <h2 className="serif-text text-3xl font-light text-[#1C1916] tracking-tight">Your Daily Itinerary</h2>
+                                        </div>
+                                        <ItineraryTimeline plan={aiItinerary} />
+                                    </>
+                                )}
                             </div>
                         )}
                     </div>

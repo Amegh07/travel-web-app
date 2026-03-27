@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Clock, Utensils, Share, Printer, Plus, Edit2, Camera, X, Navigation, Info, Ticket, Copy, Check } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ChatBot from '../components/ChatBot';
+import { API_BASE } from '../services/api';
 
 const DayDetailPage = ({ dayNumber: propDayNumber, tripId: propTripId, onClose }) => {
     const params = useParams();
@@ -126,7 +127,7 @@ const DayDetailPage = ({ dayNumber: propDayNumber, tripId: propTripId, onClose }
                 resultsData: cache ? JSON.parse(cache) : {}
             };
 
-            const response = await fetch('http://localhost:5000/api/save-trip', {
+            const response = await fetch(`${API_BASE}/api/save-trip`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)

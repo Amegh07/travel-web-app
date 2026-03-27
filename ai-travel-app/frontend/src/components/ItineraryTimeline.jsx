@@ -176,7 +176,7 @@ const ItineraryTimeline = ({ plan, currency = 'INR' }) => {
                                                             {!isTransit && (
                                                                 <button
                                                                     onClick={() => window.open(actMapsUrl, '_blank')}
-                                                                    title={act.latitude ? `Open exact location (${act.latitude.toFixed(4)}, ${act.longitude.toFixed(4)})` : 'Search on Google Maps'}
+                                                                    title="Search on Google Maps"
                                                                     className="flex-shrink-0 p-1 rounded-lg text-[#9C9690] hover:text-[#B89A6A] hover:bg-[#F4F1EB] transition-colors"
                                                                 >
                                                                     <MapPin size={13} />
@@ -188,16 +188,6 @@ const ItineraryTimeline = ({ plan, currency = 'INR' }) => {
                                                             <p className="text-[#9C9690] text-xs leading-relaxed mt-1">
                                                                 {act.description}
                                                             </p>
-                                                        )}
-
-                                                        {/* ✅ Show coordinate badge if AI provided them */}
-                                                        {!isTransit && act.latitude && act.longitude && (
-                                                            <div className="mt-1.5 inline-flex items-center gap-1 px-2 py-0.5 bg-[#F4F1EB] border border-[#E8E4DC] rounded-md">
-                                                                <MapPin size={9} className="text-[#B89A6A]" />
-                                                                <span className="text-[9px] font-mono text-[#9C9690]">
-                                                                    {act.latitude.toFixed(4)}, {act.longitude.toFixed(4)}
-                                                                </span>
-                                                            </div>
                                                         )}
 
                                                         {/* Dress Code Warning */}
@@ -280,9 +270,7 @@ const ItineraryTimeline = ({ plan, currency = 'INR' }) => {
                     {selectedFoodAct && (() => {
                         const cleanActivityName = selectedFoodAct.activity.replace(/[\p{Emoji_Presentation}\p{Extended_Pictographic}]/gu, '').trim();
                         const tripDestination = plan?.trip_name?.replace(/[^a-zA-Z\s]/g, '').trim() || '';
-                        const mapsUrl = selectedFoodAct.latitude && selectedFoodAct.longitude
-                            ? `https://www.google.com/maps/search/restaurants/@${selectedFoodAct.latitude},${selectedFoodAct.longitude},15z`
-                            : `https://www.google.com/maps/search/restaurants+near+${encodeURIComponent(tripDestination || cleanActivityName)}`;
+                        const mapsUrl = `https://www.google.com/maps/search/restaurants+near+${encodeURIComponent(tripDestination || cleanActivityName)}`;
                         return (
                             <motion.div
                                 initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}

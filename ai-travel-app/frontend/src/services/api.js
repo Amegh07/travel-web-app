@@ -1,4 +1,4 @@
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
+export const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 
 // 🪄 MAGIC SEARCH: NLP Extraction
 export const extractIntent = async (query, userLocation) => {
@@ -209,33 +209,4 @@ export const fetchItineraryStream = async (payload, onChunk, onError, onRetry, s
         onError(err);
     }
 };
-
-export const fetchMapping = async (segments) => {
-    try {
-        const res = await fetch(`${API_BASE}/api/mapping`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ segments })
-        });
-        if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
-        return await res.json();
-    } catch (error) {
-        console.error("Mapping API Error:", error);
-        return { logistics: [] };
-    }
-};
-
-export const fetchCFO = async (budgetData) => {
-    try {
-        const res = await fetch(`${API_BASE}/api/cfo`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(budgetData)
-        });
-        if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
-        return await res.json();
-    } catch (error) {
-        console.error("CFO API Error:", error);
-        return { status: "safe", message: "Budget tracker offline" };
-    }
-};
+

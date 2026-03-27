@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { API_BASE } from '../services/api';
 
 const SharedTripPage = () => {
     const { id } = useParams();
@@ -9,7 +10,7 @@ const SharedTripPage = () => {
     useEffect(() => {
         const loadTrip = async () => {
             try {
-                const res = await fetch(`http://localhost:5000/api/trip/${id}`);
+                const res = await fetch(`${API_BASE}/api/trip/${id}`);
                 if (!res.ok) {
                     throw new Error('Trip not found or expired.');
                 }

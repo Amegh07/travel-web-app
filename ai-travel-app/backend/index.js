@@ -205,10 +205,12 @@ app.get('/api/city-search', async (req, res) => {
     try {
         const { keyword } = req.query;
         if (!keyword || keyword.length < 2) return res.json([]);
-        const client = keyManager.getAmadeusClient("FLIGHTS");
         const response = await client.referenceData.locations.get({ keyword, subType: 'CITY,AIRPORT' });
         res.json(response.data);
-    } catch { res.json([]); }
+    } catch (error) { 
+        console.error("City Search Error:", error);
+        res.status(500).json({ error: "Failed to fetch city data" }); 
+    }
 });
 
 // --- ✈️ ROUTE 2: FLIGHT SEARCH (One-Way + Round Trip) ---
@@ -383,7 +385,7 @@ app.post('/api/itinerary', async (req, res) => {
       3. **Pacing & Elegance** – Include 4-5 activities per day. You MUST explicitly schedule Breakfast (08:00-09:30), Lunch, and Dinner. Do not exceed 6 activities to conserve tokens. Fill the day efficiently.
       4. **Explicit Interest Matching (CRITICAL)** – You MUST incorporate the user's explicit interests (${interests?.join(', ') || 'Popular Highlights'}) directly into your choices. This is a HARD constraint.
       5. **Premium Description** – Every 'description' must be vivid and sensory-rich, but strictly obey the 12-word limit.
-      5. **Budget Exactitude** – Sum of all 'cost_estimate' fields MUST NOT exceed ${currency} ${availableToSpend}. Be realistic with pricing.
+      5. **Budget Approximate** – Aim for the sum of all 'cost_estimate' fields to be near ${currency} ${availableToSpend}. Do not worry about exact math. Be realistic with pricing.
       6. **Time-of-Day Intelligence (CRITICAL — THINK BEFORE YOU SCHEDULE)** – You MUST apply real-world common sense to EVERY activity's time slot. Violating this makes the itinerary useless.
          MANDATORY TIME RULES (non-negotiable):
          - **Museums, Art Galleries, Biennales, Heritage Sites, Temples, Monuments** → ONLY schedule between 08:00–18:00. They are CLOSED at night. NEVER put these after 19:00.
@@ -399,9 +401,8 @@ app.post('/api/itinerary', async (req, res) => {
          - **Religious Sites & Places of Worship** → Respect prayer times. Avoid Friday afternoon for mosques. Early morning (06:00–09:00) visits to temples/churches are often the most authentic.
          LOGIC TEST: Before placing any activity, ask yourself — "Is this place realistically open and enjoyable at this exact time?" If the answer is no, move it to the correct time window.
       6. **Output Format** – Your final output MUST end with valid JSON. Inject tasteful emojis into themes and activities.
-      7. **Precision Coordinates** – "latitude" and "longitude" must be highly accurate decimal coordinates (e.g., 48.8566, 2.3522). This is critical for the interactive map widget.
-      8. **Localness Metric** – Assign a "localness_signal" from 0.0 (pure tourist trap) to 1.0 (deeply local hidden gem).
-      9. **Transit Instructions** – Provide highly specific, realistic transit instructions (e.g., "Take a 10-minute Uber", "Walk 15 minutes east down the tree-lined promenade").
+      7. **Localness Metric** – Assign a "localness_signal" from 0.0 (pure tourist trap) to 1.0 (deeply local hidden gem).
+      8. **Transit Instructions** – Provide highly specific, realistic transit instructions (e.g., "Take a 10-minute Uber", "Walk 15 minutes east down the tree-lined promenade").
       10. **Emojis** – Use ACTUAL emoji characters (like 🍷 or 🏛️). DO NOT use unicode escape sequences.
       11. **Real Establishments Only** – NEVER use generic names like "Local Restaurant" or "Local Cafe". You MUST provide the exact, real-world name of a specific establishment that exists on Google Maps (e.g., "Pujol", "Cafe de Flore").
       12. **Mandatory Basecamp** – The user's basecamp is ${hotel?.name || 'the selected hotel'}. Day 1 MUST include an explicit arrival at this hotel. The geographic clustering of every day MUST revolve logically around this specific hotel's location. All daily itineraries must logically terminate near this location.
@@ -415,9 +416,9 @@ app.post('/api/itinerary', async (req, res) => {
           1. Define 'High-Energy' activities as steep hikes, long museum tours (>2 hours), or intense physical sports. Cap these at 2 per FULL day. 
           2. For every FULL travel day (excluding arrival/departure days where time is limited), you must schedule a 'Rest/Cafe Block' in the mid-afternoon. 
           3. Scale this rest block based on the group: 30-45 minutes for Solo/Couples, and 60-90 minutes for Families/Seniors.
-      19. **Native Transit Only (LAST MILE RULE)** — CRITICAL TRANSIT RULE: Suggest the most practical, budget-appropriate native transit. Do not suggest expensive tourist-novelty transit (like horse carriages) for logistical point-A-to-point-B travel.
+      18. **Native Transit Only (LAST MILE RULE)** — CRITICAL TRANSIT RULE: Suggest the most practical, budget-appropriate native transit. Do not suggest expensive tourist-novelty transit (like horse carriages) for logistical point-A-to-point-B travel.
 
-      REQUIRED JSON SCHEMA: {"trip_name":"Catchy trip title","daily_plan":[{"day":1,"date":"YYYY-MM-DD","theme":"🎨 Day theme","activities":[{"time":"HH:MM","activity":"Real place name 🗺️","type":"food|sightseeing|logistics","cost_estimate":0,"description":"Two vivid sentences describing the experience.","reason_for_choice":"Why this place is unmissable.","transit_instruction":"Specific transit instruction.","transitToNext":{"method":"Walk / Subway / Taxi","estimatedMinutes":15},"dressCodeRequired":true,"dressCodeDetails":"e.g., Shoulders covered, or null if none","localness_signal":0.5,"latitude":0.0,"longitude":0.0}]}]}
+      REQUIRED JSON SCHEMA: {"trip_name":"Catchy trip title","daily_plan":[{"day":1,"date":"YYYY-MM-DD","theme":"🎨 Day theme","activities":[{"time":"HH:MM","activity":"Real place name 🗺️","type":"food|sightseeing|logistics","cost_estimate":0,"description":"Two vivid sentences describing the experience.","reason_for_choice":"Why this place is unmissable.","transit_instruction":"Specific transit instruction.","transitToNext":{"method":"Walk / Subway / Taxi","estimatedMinutes":15},"dressCodeRequired":true,"dressCodeDetails":"e.g., Shoulders covered, or null if none","localness_signal":0.5}]}]}
       Follow this schema exactly for ALL ${daysCount} days. Output RAW JSON ONLY — no Markdown, no code blocks. Start exactly with { and end exactly with }.`;
 
         // 👥 4a. INJECT GROUP / PAX CONTEXT
@@ -446,12 +447,12 @@ app.post('/api/itinerary', async (req, res) => {
         - If the group is a Family or Seniors, explicitly call out any access or mobility considerations in the activity description.`;
 
         // 📊 4b. INJECT CFO RULES
-        systemPrompt += `\n\nFINANCIAL CONSTRAINTS (CFO ENGINE):
-        - The user has a STRICT remaining budget of ${currency} ${totalRemaining} for the entire trip (excluding flights/hotels).
-        - The average daily allowance is ${currency} ${dailyAllowance}.
-        - DO NOT exceed the total remaining budget.
+        systemPrompt += `\n\nCREATIVE ARCHITECT FOCUS:
+        - Your goal is to find amazing hidden gems in ${destination}.
+        - Constraint: Stay *approximately* near ${currency} ${totalRemaining}.
+        - Focus: Detailed descriptions and geographical clustering.
         - Provide realistic \`cost_estimate\` numbers in ${currency} for EVERY activity.
-        - Do not attempt to subtract costs from the total budget in your text fields. Simply estimate the local cost in the destination's native currency (e.g., '${currency} 20') and leave the global budgeting math to the user's interface.`;
+        - Format: Strict JSON only.`;
 
         // 🥗 4c. DIETARY RESTRICTION ENGINE
         if (dietaryRestriction && dietaryRestriction !== 'none') {
@@ -550,9 +551,7 @@ app.post('/api/itinerary', async (req, res) => {
             }).optional().nullable(),
             dressCodeRequired: z.boolean().optional().nullable(),
             dressCodeDetails: z.string().optional().nullable(),
-            localness_signal: z.number().optional().nullable(),
-            latitude: z.number().optional().nullable(),
-            longitude: z.number().optional().nullable()
+            localness_signal: z.number().optional().nullable()
         });
         const DaySchema = z.object({
             day: z.number(),
@@ -674,7 +673,10 @@ app.post('/api/events', async (req, res) => {
         const events = Array.isArray(parsed) ? parsed : (parsed.events || parsed.activities || []);
         res.json(events);
 
-    } catch { res.json([]); }
+    } catch (error) { 
+        console.error("Events Error:", error);
+        res.status(500).json({ error: "Failed to fetch events" }); 
+    }
 });
 
 // ==================================================
@@ -862,8 +864,6 @@ ${JSON.stringify(currentItinerary, null, 2)}`;
     }
 });
 // --- CHAT & OTHERS ---
-app.post('/api/mapping', async (req, res) => { res.json({ logistics: [] }); });
-app.post('/api/cfo', async (req, res) => { res.json({ status: "safe" }); });
 app.post('/api/intent', async (req, res) => {
     try {
         const { message } = req.body;
