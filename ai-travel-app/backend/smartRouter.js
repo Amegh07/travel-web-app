@@ -161,11 +161,26 @@ export async function runAgent(role, systemPrompt, userContent, history = []) {
     // PRIMARY ATTEMPT: Use the assigned model
     return await callGroq(model, temp, maxTokens);
   } catch (error) {
-    // 🛡️ SMART 429 FALLBACK: If rate-limited on heavy model, silently retry on FAST
-    if (error.status === 429 && model !== ModelConfig.FAST) {
-      console.warn(`⚠️ 429 Rate Limit on [${model}]. Falling back to [${ModelConfig.FAST}]...`);
+    // 🛡️ SMART 429 FALLBACK: If rate-limited on heavy model
+    if (error.status === 429) {
+      const fallbackKey = process.env.GROQ_KEY_FALLBACK;
+      const fallbackModel = fallbackKey ? model : ModelConfig.FAST;
+      console.warn(`⚠️ 429 Rate Limit on [${model}]. Falling back with ${fallbackKey ? 'NEW KEY' : 'DOWNGRADE'} to [${fallbackModel}]...`);
       try {
-        return await callGroq(ModelConfig.FAST, 0.5, 1500);
+        if (fallbackKey) {
+          const fallbackClient = new (await import('groq-sdk')).default({ apiKey: fallbackKey, timeout: 300000 });
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 20000); // 20s hard timeout
+          try {
+            const completion = await fallbackClient.chat.completions.create({
+              messages: [{ role: "system", content: systemPrompt }, ...historyMessages, { role: "user", content: userContent }],
+              model: fallbackModel, temperature: temp, max_tokens: maxTokens, response_format: { type: "json_object" }
+            }, { signal: controller.signal });
+            return completion.choices[0]?.message?.content;
+          } finally { clearTimeout(timeout); }
+        } else {
+          return await callGroq(ModelConfig.FAST, 0.5, 1500);
+        }
       } catch (fallbackError) {
         console.error(`❌ Fallback also failed (${keyId}):`, fallbackError.message);
         throw fallbackError;
@@ -217,11 +232,13 @@ export async function* runAgentStream(role, systemPrompt, userContent, signal = 
         const fallbackClient = fallbackKey
           ? new (await import('groq-sdk')).default({ apiKey: fallbackKey, timeout: 300000 })
           : keyManager.getGroqClient(AgentRole.CFO).client;
-        // Force downgrade to 8B model. 70B has a 6,000 TPM free-tier limit which kills streams mid-generation.
-        const fallbackModel = ModelConfig.FAST;
+          
+        // If they provided a fresh fallback key, maintain the requested high-power model.
+        // Otherwise, defensively downgrade to 8B to survive the aggressive rate limit.
+        const fallbackModel = fallbackKey ? model : ModelConfig.FAST;
         
         console.warn(`♻️ Using ${fallbackKey ? 'dedicated fallback key (new account)' : 'downgraded 8B model'} → [${fallbackModel}]`);
-        // Llama 3.3 70B Versatile supports exactly 32768 maximum completion tokens. Llama 3 8B supports 8192.
+        
         const fallbackTokens = fallbackModel === ModelConfig.REASONING ? 32768 : 8192;
         const fallbackOptions = { ...streamOptions, model: fallbackModel, max_tokens: fallbackTokens };
         const fallbackStream = await fallbackClient.chat.completions.create(fallbackOptions, { signal });

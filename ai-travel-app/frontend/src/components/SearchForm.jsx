@@ -13,17 +13,43 @@ const SearchForm = ({ onSearch, isLoading }) => {
   const [budget, setBudget] = useState(2000);
   const [currency, setCurrency] = useState('INR');
   const [interests, setInterests] = useState([]);
-  const [pax, setPax] = useState(1); // 👥 Passenger count
+  const [pax, setPax] = useState(1);
   const [vibeLevel, setVibeLevel] = useState(1);
   const [tripPurpose, setTripPurpose] = useState('holiday');
-  const [groupType, setGroupType] = useState('friends'); // 👨‍👩‍👧 Group dynamics
-  const [dietaryRestriction, setDietaryRestriction] = useState('none'); // 🥗 Dietary needs
+  const [groupType, setGroupType] = useState('solo'); // starts consistent with pax=1
+  const [dietaryRestriction, setDietaryRestriction] = useState('none');
+  const [customDietary, setCustomDietary] = useState('');
 
   // ✅ FEATURE: Trip Vibe Tags
   const INTEREST_TAGS = ['Culture', 'Food', 'Nature', 'Adventure', 'Nightlife', 'Shopping'];
 
   const toggleInterest = (tag) => {
     setInterests(prev => prev.includes(tag) ? prev.filter(i => i !== tag) : [...prev, tag]);
+  };
+
+  // Two-way sync: selecting a group type enforces a matching pax count
+  const handleGroupTypeChange = (id) => {
+    setGroupType(id);
+    if (id === 'solo')   setPax(1);
+    if (id === 'couple') setPax(2);  // covers both Couple (holiday) and Duo (business)
+    // all other ids (family, friends, seniors, group) allow free pax editing
+  };
+
+  // Two-way sync: changing pax promotes the group type automatically
+  const handlePaxChange = (raw) => {
+    const val = Math.max(1, Math.min(10, parseInt(raw) || 1));
+    setPax(val);
+    if (val === 1) { setGroupType('solo'); return; }
+    if (val === 2) {
+      // only snap to couple/duo if currently stuck on solo
+      setGroupType(prev => prev === 'solo' ? 'couple' : prev);
+      return;
+    }
+    // 3+: if on a single/pair lock, promote to the nearest multi-person group
+    setGroupType(prev => (prev === 'solo' || prev === 'couple') 
+      ? (tripPurpose === 'business' ? 'friends' : 'friends') 
+      : prev
+    );
   };
 
   const [formError, setFormError] = useState(null);
@@ -38,6 +64,27 @@ const SearchForm = ({ onSearch, isLoading }) => {
       setFormError("Please enter a valid budget greater than 0.");
       return;
     }
+
+    // Fix #3: Validate departure date is not in the past
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (new Date(departDate) < today) {
+      setFormError("Departure date cannot be in the past.");
+      return;
+    }
+
+    // Fix #3: Validate return date is after departure date for round trips
+    if (tripType === 'round' && returnDate && returnDate <= departDate) {
+      setFormError("Return date must be after your departure date.");
+      return;
+    }
+
+    // Validate custom dietary: reject empty freetext when custom is chosen
+    if (dietaryRestriction === 'custom' && !customDietary.trim()) {
+      setFormError("Please describe your dietary requirement, or select 'No Restrictions'.");
+      return;
+    }
+
     setFormError(null);
 
     // ✅ SENDING ALL DATA
@@ -46,7 +93,7 @@ const SearchForm = ({ onSearch, isLoading }) => {
       toCity,
       departDate,
       returnDate,
-      budget,
+      budget: parsedBudget,
       currency,
       interests,
       vibeLevel,
@@ -54,7 +101,10 @@ const SearchForm = ({ onSearch, isLoading }) => {
       tripType,
       pax,
       groupType,
-      dietaryRestriction
+      // Send custom text if 'custom' is selected and user typed something; fallback to dropdown value
+      dietaryRestriction: dietaryRestriction === 'custom'
+        ? (customDietary.trim() || 'none')
+        : dietaryRestriction
     });
   };
 
@@ -71,7 +121,7 @@ const SearchForm = ({ onSearch, isLoading }) => {
       <div className="flex justify-center mb-10">
         <div className="bg-[#F4F1EB] p-1.5 rounded-full flex border border-[#E8E4DC]">
           <button
-            onClick={() => setTripType('one-way')}
+          onClick={() => { setTripType('one-way'); setReturnDate(''); }}
             className={`px-6 py-2.5 rounded-full text-[10px] tracking-widest uppercase font-medium transition-all ${tripType === 'one-way' ? 'bg-[#1C1916] text-[#FDFCFA] shadow-md' : 'text-[#9C9690] hover:text-[#1C1916]'}`}
           >
             One Way
@@ -146,12 +196,11 @@ const SearchForm = ({ onSearch, isLoading }) => {
               <input
                 type="number"
                 value={budget}
-                onChange={(e) => setBudget(e.target.value)}
+                onChange={(e) => setBudget(parseFloat(e.target.value) || 0)}
                 className="w-full pl-12 bg-[#F4F1EB] text-[#1C1916] font-medium font-sans text-sm p-4 rounded-2xl border border-[#E8E4DC] focus:ring-2 focus:ring-[#B89A6A]/30 outline-none transition-all"
                 placeholder="Budget"
               />
             </div>
-            {/* 👥 TRAVELERS INPUT */}
             <div className="relative group">
               <span className="absolute left-4 top-[17px] text-[#9C9690] group-focus-within:text-[#B89A6A] z-10 transition-colors text-base select-none">👥</span>
               <input
@@ -159,8 +208,10 @@ const SearchForm = ({ onSearch, isLoading }) => {
                 min="1"
                 max="10"
                 value={pax}
-                onChange={(e) => setPax(Math.max(1, parseInt(e.target.value) || 1))}
-                className="w-20 pl-10 pr-2 bg-[#F4F1EB] text-[#1C1916] font-medium font-sans text-sm p-4 rounded-2xl border border-[#E8E4DC] focus:ring-2 focus:ring-[#B89A6A]/30 outline-none transition-all text-center"
+                onChange={(e) => handlePaxChange(e.target.value)}
+                // Only Solo is locked — Couple allows upgrading to 3+ via pax
+                disabled={groupType === 'solo'}
+                className={`w-20 pl-10 pr-2 bg-[#F4F1EB] text-[#1C1916] font-medium font-sans text-sm p-4 rounded-2xl border border-[#E8E4DC] focus:ring-2 focus:ring-[#B89A6A]/30 outline-none transition-all text-center ${groupType === 'solo' ? 'opacity-60 cursor-not-allowed' : ''}`}
                 title="Number of travelers"
               />
             </div>
@@ -195,13 +246,13 @@ const SearchForm = ({ onSearch, isLoading }) => {
             </label>
             <div className="flex bg-[#F4F1EB] p-1.5 rounded-2xl border border-[#E8E4DC]">
               <button
-                onClick={() => setTripPurpose('holiday')}
+                onClick={() => { setTripPurpose('holiday'); setGroupType(pax === 1 ? 'solo' : pax === 2 ? 'couple' : 'friends'); }}
                 className={`flex-1 py-2 rounded-xl text-xs tracking-wide uppercase font-medium transition-all ${tripPurpose === 'holiday' ? 'bg-[#1C1916] text-[#FDFCFA] shadow-md' : 'text-[#9C9690] hover:text-[#1C1916]'}`}
               >
                 Holiday
               </button>
               <button
-                onClick={() => setTripPurpose('business')}
+                onClick={() => { setTripPurpose('business'); setGroupType(pax === 1 ? 'solo' : pax === 2 ? 'couple' : 'friends'); }}
                 className={`flex-1 py-2 rounded-xl text-xs tracking-wide uppercase font-medium transition-all ${tripPurpose === 'business' ? 'bg-[#1C1916] text-[#FDFCFA] shadow-md' : 'text-[#9C9690] hover:text-[#1C1916]'}`}
               >
                 Business
@@ -209,22 +260,30 @@ const SearchForm = ({ onSearch, isLoading }) => {
             </div>
           </div>
 
-        {/* Group Type */}
+        {/* Group Type — options change based on Trip Purpose */}
         <div className="mt-6">
           <label className="text-[10px] font-medium text-[#9C9690] ml-2 tracking-widest uppercase mb-3 flex items-center gap-2">
-            Group Type
+            {tripPurpose === 'business' ? 'Travel Party' : 'Group Type'}
           </label>
           <div className="flex flex-wrap gap-2">
-            {[
-              { id: 'solo', label: '🧳 Solo' },
-              { id: 'couple', label: '💑 Couple' },
-              { id: 'family', label: '👨‍👩‍👧 Family' },
-              { id: 'friends', label: '🎉 Friends' },
-              { id: 'seniors', label: '🧓 Seniors' },
-            ].map(g => (
+            {(tripPurpose === 'business'
+              ? [
+                  { id: 'solo',    label: '🧳 Solo' },
+                  { id: 'couple',  label: '🤝 Duo' },
+                  { id: 'friends', label: '👔 Small Team' },
+                  { id: 'group',   label: '🏢 Department' },
+                ]
+              : [
+                  { id: 'solo',    label: '🧳 Solo' },
+                  { id: 'couple',  label: '💑 Couple' },
+                  { id: 'family',  label: '👨‍👩‍👧 Family' },
+                  { id: 'friends', label: '🎉 Friends' },
+                  { id: 'seniors', label: '🧓 Seniors' },
+                ]
+            ).map(g => (
               <button
                 key={g.id}
-                onClick={() => setGroupType(g.id)}
+                onClick={() => handleGroupTypeChange(g.id)}
                 className={`px-4 py-2 rounded-xl text-xs font-medium tracking-wide transition-all border ${
                   groupType === g.id
                     ? 'bg-[#1C1916] text-[#FDFCFA] border-[#1C1916] shadow-md'
@@ -244,7 +303,11 @@ const SearchForm = ({ onSearch, isLoading }) => {
           </label>
           <select
             value={dietaryRestriction}
-            onChange={(e) => setDietaryRestriction(e.target.value)}
+            onChange={(e) => {
+              setDietaryRestriction(e.target.value);
+              // Clear custom text when switching away from custom
+              if (e.target.value !== 'custom') setCustomDietary('');
+            }}
             className="w-full bg-[#F4F1EB] text-[#1C1916] text-sm font-medium px-4 py-3 rounded-xl border border-[#E8E4DC] focus:border-[#B89A6A] focus:outline-none transition-all appearance-none cursor-pointer"
           >
             <option value="none">No Restrictions</option>
@@ -253,7 +316,19 @@ const SearchForm = ({ onSearch, isLoading }) => {
             <option value="halal">Halal</option>
             <option value="gluten-free">Gluten-Free</option>
             <option value="pescatarian">Pescatarian</option>
+            <option value="custom">✨ Custom (type below)…</option>
           </select>
+          {/* Freetext input — only visible when Custom is selected */}
+          {dietaryRestriction === 'custom' && (
+            <input
+              type="text"
+              value={customDietary}
+              onChange={(e) => setCustomDietary(e.target.value)}
+              placeholder="e.g. No nuts, Kosher, Jain, Raw food only…"
+              maxLength={100}
+              className="w-full mt-2 bg-[#F4F1EB] text-[#1C1916] text-sm font-medium px-4 py-3 rounded-xl border border-[#B89A6A]/50 focus:border-[#B89A6A] focus:outline-none transition-all"
+            />
+          )}
         </div>
       </div>
       {formError && (

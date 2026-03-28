@@ -147,7 +147,12 @@ export const searchAll = async (searchData) => {
         return await res.json();
     } catch (error) {
         console.error("Search All API Error:", error);
-        return { transportData: { results: [] }, hotelData: [], eventData: [] };
+        return { 
+            transportData: { type: 'none', results: [], journey: { from: 'ERR', to: 'ERR' } }, 
+            hotelData: [], 
+            eventData: [],
+            heroImage: null
+        };
     }
 };
 

@@ -24,13 +24,20 @@ const MainApp = () => {
   }, [searchData]);
 
   const handleSearch = (data) => {
-    sessionStorage.removeItem('travex_results_cache');
-    localStorage.removeItem('travex_results_cache'); // FORCE CLEAR OLD CACHE
+    localStorage.removeItem('travex_results_cache');
     setSearchData(data);
   };
 
+  // Bug S fix: listen for shared trip load from SharedTripPage (avoids hard reload)
+  useEffect(() => {
+    const handler = (e) => {
+      if (e.detail) setSearchData(e.detail);
+    };
+    window.addEventListener('travex:tripLoaded', handler);
+    return () => window.removeEventListener('travex:tripLoaded', handler);
+  }, []);
+
   const handleBack = () => {
-    sessionStorage.removeItem('travex_results_cache');
     localStorage.removeItem('travex_results_cache'); // FORCE CLEAR OLD CACHE
     setSearchData(null);
   };

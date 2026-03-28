@@ -154,7 +154,11 @@ const ChatBot = ({ destination, aiItinerary, setAiItinerary, currentDay, hotels 
     const isOpenRef = useRef(isOpen);
     useEffect(() => { isOpenRef.current = isOpen; }, [isOpen]);
 
-    // Helper: add an assistant message and track unread if chat is closed
+    // Bug #3 Fix: Auto-scroll to bottom when new messages arrive
+    useEffect(() => {
+        scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, [messages, loading]);
+
     const addAssistantMessage = (msg) => {
         setMessages(prev => {
             const next = [...prev, msg];
@@ -180,7 +184,9 @@ const ChatBot = ({ destination, aiItinerary, setAiItinerary, currentDay, hotels 
         setInput('');
         setLoading(true);
 
-        addAssistantMessage({ role: 'assistant', text: '✦ Thinking...', type: 'system' });
+        // Fix #5: Use a stable unique ID so concurrent requests don't clobber each other
+        const thinkingId = `thinking_${Date.now()}`;
+        addAssistantMessage({ id: thinkingId, role: 'assistant', text: '✦ Thinking...', type: 'system' });
             
         let intentRes;
         try {
@@ -191,8 +197,8 @@ const ChatBot = ({ destination, aiItinerary, setAiItinerary, currentDay, hotels 
         
         const { intent, parameters } = intentRes;
 
-        // Remove thinking message
-        setMessages(prev => prev.filter(m => m.text !== '✦ Thinking...'));
+        // Fix #5: Remove thinking message by stable ID, not fragile text match
+        setMessages(prev => prev.filter(m => m.id !== thinkingId));
 
         // 1. HOTEL SEARCH
         if (intent === 'search_hotel' && hotels.length > 0) {
@@ -313,7 +319,9 @@ const ChatBot = ({ destination, aiItinerary, setAiItinerary, currentDay, hotels 
 
         // 5. GENERAL CHAT (Fallback)
         try {
-            const data = await chatWithAI(`Context: Planning trip to ${destination}. Question: ${userPrompt}`, { currentDay }, messages);
+            // Fix #8: Trim history to last 10 messages to prevent token overflow
+            const trimmedHistory = messages.slice(-10);
+            const data = await chatWithAI(`Context: Planning trip to ${destination}. Question: ${userPrompt}`, { currentDay }, trimmedHistory);
             addAssistantMessage({ role: 'assistant', text: data?.reply || "I'm having trouble connecting. Try again shortly." });
         } catch {
             addAssistantMessage({ role: 'assistant', text: 'Something went wrong. My systems are busy.' });

@@ -33,10 +33,9 @@ const buildDayMapsUrl = (activities) => {
             return !t.includes('logistics');
         })
         .map(act => {
-            // Force search by the specific business name + trip location context
-            // AI coordinates are too generic and will drop pins on roads/runways instead of front doors
             const cleanActivityName = (act.activity || '').replace(/[\p{Emoji_Presentation}\p{Extended_Pictographic}]/gu, '').trim();
-            return encodeURIComponent(`${cleanActivityName}, ${activities._contextLocation || 'City'}`);
+            // Fix #6: use the `location` argument passed in instead of the always-undefined `activities._contextLocation`
+            return encodeURIComponent(`${cleanActivityName}, ${location || 'City'}`);
         });
 
     if (stops.length === 0) return null;
@@ -44,7 +43,6 @@ const buildDayMapsUrl = (activities) => {
         return `https://www.google.com/maps/search/?api=1&query=${stops[0]}`;
     }
 
-    // Google Maps directions: origin/waypoint1/waypoint2/.../destination
     const origin = stops[0];
     const destination = stops[stops.length - 1];
     const waypoints = stops.slice(1, -1);
@@ -56,7 +54,10 @@ const buildDayMapsUrl = (activities) => {
     return url;
 };
 
-const ItineraryTimeline = ({ plan, currency = 'INR' }) => {
+// Accepts `location` as the destination name for Maps context
+const buildDayMapsUrlWithLocation = (activities, location) => buildDayMapsUrl(activities, location);
+
+const ItineraryTimeline = ({ plan, currency = 'INR', destination = '' }) => {
     const navigate = useNavigate();
     const currencySymbol = currency === 'USD' ? '$' : currency === 'EUR' ? '€' : '₹';
     const [itinerary, setItinerary] = useState(plan);
@@ -87,8 +88,8 @@ const ItineraryTimeline = ({ plan, currency = 'INR' }) => {
 
                 <div className="space-y-10">
                     {itinerary.daily_plan.map((day, dayIndex) => {
-                        // ✅ FIX: Build real Google Maps URL using coordinates
-                        const dayMapsUrl = buildDayMapsUrl(day.activities || []);
+                        // Fix #6: pass destination so Maps pins use real city context
+                        const dayMapsUrl = buildDayMapsUrl(day.activities || [], destination);
 
                         return (
                             <div key={`day-${dayIndex}`} className="relative pl-8">
@@ -97,7 +98,8 @@ const ItineraryTimeline = ({ plan, currency = 'INR' }) => {
                                 {/* Day header */}
                                 <div className="flex items-start justify-between mb-5 gap-4">
                                     <div 
-                                        onClick={() => navigate(`/itinerary/${encodeURIComponent(itinerary.trip_name || 'Trip')}/day/${day.day}`)}
+                                        // Fix #16: guard against AI omitting day.day — fall back to loop index
+                                        onClick={() => navigate(`/itinerary/${encodeURIComponent(itinerary.trip_name || 'Trip')}/day/${day.day ?? dayIndex + 1}`)}
                                         className="cursor-pointer group flex-1"
                                     >
                                         <h3 className="serif-text text-2xl font-light text-[#1C1916] tracking-tight flex items-center gap-1 group-hover:text-[#B89A6A] transition-colors">

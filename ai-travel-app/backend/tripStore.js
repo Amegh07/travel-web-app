@@ -14,9 +14,8 @@ export function saveTripData(app) {
     app.post('/api/save-trip', (req, res) => {
         try {
             const tripData = req.body;
-            
-            // Generate a short unique ID (e.g., 8 chars)
-            const id = crypto.randomBytes(4).toString('hex');
+            // Fix #12: Reuse existing share ID if updating an already shared trip
+            const id = tripData.shareId || crypto.randomBytes(4).toString('hex');
             
             const filePath = path.join(TRIPS_DIR, `${id}.json`);
             

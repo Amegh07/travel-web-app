@@ -24,11 +24,17 @@ const SharedTripPage = () => {
 
                 // 2. Save search data to sessionStorage so App.jsx boots into ResultsPage
                 if (data.searchData) {
+                    // Fix #12: Inject the current share ID so future saves update this trip
+                    data.searchData.shareId = id;
                     sessionStorage.setItem('travex_search', JSON.stringify(data.searchData));
                 }
 
-                // 3. Force a hard reload to trigger App.jsx's initial state load
-                window.location.replace('/');
+                // Bug S fix: dispatch a custom event instead of hard-reloading.
+                // App.jsx listens and updates searchData state with no page reload.
+                if (data.searchData) {
+                    window.dispatchEvent(new CustomEvent('travex:tripLoaded', { detail: data.searchData }));
+                }
+                navigate('/');
                 
             } catch (err) {
                 console.error(err);

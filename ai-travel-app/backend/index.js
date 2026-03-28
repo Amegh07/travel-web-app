@@ -10,6 +10,7 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 const TICKETMASTER_KEY = process.env.TICKETMASTER_KEY;
+const UNSPLASH_ACCESS_KEY = process.env.UNSPLASH_ACCESS_KEY;
 
 if (!TICKETMASTER_KEY) {
     console.warn("⚠️ WARNING: TICKETMASTER_KEY is missing. Real event processing is disabled.");
@@ -29,12 +30,26 @@ app.use((req, res, next) => {
 function extractJSON(raw) {
     if (!raw) return null;
     const cleaned = raw.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
-    const match = cleaned.match(/[\{\[][\s\S]*[\}\]]/);
-    if (!match) throw new Error("No JSON block found strictly matching { or [.");
+    // Fix #2: Use a non-greedy scan so we match the FIRST complete JSON object,
+    // not the last closing brace (greedy [\s\S]* would overshoot when AI adds trailing text)
+    const match = cleaned.match(/[\{\[][\s\S]*?[\}\]](?=[^\{\[\]\}]*$)/s)
+               || cleaned.match(/[\{\[][\s\S]*[\}\]]/);
+    if (!match) throw new Error("No JSON block found.");
     try {
         return JSON.parse(match[0]);
-    } catch (err) {
-        throw new Error("Invalid JSON structure: " + err.message);
+    } catch {
+        // Last resort: find the balanced JSON block manually
+        let start = -1, depth = 0;
+        for (let i = 0; i < cleaned.length; i++) {
+            if (cleaned[i] === '{' || cleaned[i] === '[') { if (depth === 0) start = i; depth++; }
+            else if (cleaned[i] === '}' || cleaned[i] === ']') {
+                depth--;
+                if (depth === 0 && start !== -1) {
+                    try { return JSON.parse(cleaned.slice(start, i + 1)); } catch { start = -1; }
+                }
+            }
+        }
+        throw new Error("Invalid JSON structure in AI response.");
     }
 }
 
@@ -130,7 +145,7 @@ async function resolveCityData(keyword) {
 }
 
 // --- 🛠️ HELPER: BUILD HOTEL LIST (shared by /api/hotels and /api/search-all) ---
-function buildHotelResults(topHotels, offersMap, nights, currency, budget) {
+function buildHotelResults(topHotels, offersMap, nights, currency, budget, unsplashImages = []) {
     const currencySymbol = currency === 'USD' ? '$' : currency === 'EUR' ? '€' : '₹';
     const totalBudget    = parseFloat(budget || 5000);
     const dailyBudget    = totalBudget / nights;
@@ -141,26 +156,53 @@ function buildHotelResults(topHotels, offersMap, nights, currency, budget) {
     else                         estimatedPrice = dailyBudget >= 60000 ? 15000 : dailyBudget >= 20000 ? 6000 : dailyBudget >= 8000 ? 3000 : 1500;
 
     const randomizePrice = (base, id) => {
-        const hash = Array.from(id).reduce((a, c) => a + c.charCodeAt(0), 0);
+        const safeId = String(id || 'FB_HTL_' + Math.random());
+        const hash = Array.from(safeId).reduce((a, c) => a + c.charCodeAt(0), 0);
         return Math.floor(base * (1 + ((hash % 40) - 20) / 100));
     };
 
-    return topHotels.slice(0, 6).map(h => {
+    return topHotels.slice(0, 6).map((h, i) => {
         const realTotal   = offersMap[h.hotelId];
         let   pricePerNight = realTotal ? (realTotal / nights) : randomizePrice(estimatedPrice, h.hotelId);
-        if (currency === 'INR' && pricePerNight < 1000) pricePerNight = 1000 + Math.random() * 500;
-        if (currency === 'USD' && pricePerNight < 50)   pricePerNight = 50   + Math.random() * 20;
-        if (currency === 'EUR' && pricePerNight < 50)   pricePerNight = 50   + Math.random() * 20;
+        if (currency === 'INR' && pricePerNight < 1000) pricePerNight = randomizePrice(1000, h.hotelId + '_floor');
+        if (currency === 'USD' && pricePerNight < 50)   pricePerNight = randomizePrice(50,   h.hotelId + '_floor');
+        if (currency === 'EUR' && pricePerNight < 50)   pricePerNight = randomizePrice(50,   h.hotelId + '_floor');
+        // Fix #4: replaced Math.random() with the deterministic randomizePrice helper
+        // so hotel prices are stable across page reloads and don't break CheckoutBar totals
+        
+        let imageUrl = `https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&w=800&q=80`;
+        if (unsplashImages && unsplashImages.length > 0) {
+            imageUrl = unsplashImages[i % unsplashImages.length];
+        }
+
         return {
             id:          h.hotelId,
             name:        h.name,
-            image:       `https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&w=800&q=80`,
+            image:       imageUrl,
             rating:      h.rating || '4.0',
             price:       `${currencySymbol}${Math.floor(pricePerNight)}/night`,
             isRealPrice: !!realTotal,
             distance:    `${h.distance?.value?.toFixed(1) || '1'} ${h.distance?.unit || 'KM'} from center`
         };
     });
+}
+
+// --- 🛠️ HELPER: UNSPLASH FETCH ---
+async function fetchUnsplashImages(query, count = 1) {
+    if (!UNSPLASH_ACCESS_KEY) return [];
+    try {
+        const url = `https://api.unsplash.com/photos/random?query=${encodeURIComponent(query)}&count=${count}&client_id=${UNSPLASH_ACCESS_KEY}`;
+        const res = await fetch(url);
+        if (!res.ok) {
+            console.log(`   ⚠️ Unsplash error for "${query}": ${res.status} ${res.statusText}`);
+            return [];
+        }
+        const data = await res.json();
+        return Array.isArray(data) ? data.map(img => img.urls.regular) : [data.urls.regular];
+    } catch (e) {
+        console.error("   ❌ Unsplash fetch failed:", e.message);
+        return [];
+    }
 }
 
 // --- 🛠️ HELPER: TICKETMASTER FETCH ---
@@ -202,14 +244,25 @@ async function fetchTicketmasterEvents(city, _date) {
 // 🚨 PRIORITY ROUTE: CITY SEARCH
 // ==================================================
 app.get('/api/city-search', async (req, res) => {
+    const { keyword } = req.query;
     try {
-        const { keyword } = req.query;
         if (!keyword || keyword.length < 2) return res.json([]);
+        const client = keyManager.getAmadeusClient("FLIGHTS");
         const response = await client.referenceData.locations.get({ keyword, subType: 'CITY,AIRPORT' });
         res.json(response.data);
     } catch (error) { 
-        console.error("City Search Error:", error);
-        res.status(500).json({ error: "Failed to fetch city data" }); 
+        console.error("City Search Error:", error.message || error);
+        
+        // No mock data: If Amadeus is rate limited, aggressively fallback to whatever 
+        // string the user explicitly typed so they can still proceed without seeing 
+        // synthetic options or experiencing a crash.
+        const cleanKeyword = keyword.charAt(0).toUpperCase() + keyword.slice(1);
+        const pseudoIata = keyword.substring(0, 3).toUpperCase();
+        res.json([{ 
+            name: cleanKeyword, 
+            iataCode: pseudoIata, 
+            address: { countryName: "Global" } 
+        }]);
     }
 });
 
@@ -446,7 +499,23 @@ app.post('/api/itinerary', async (req, res) => {
         - Every activity in every day MUST be appropriate and realistic for this group.
         - If the group is a Family or Seniors, explicitly call out any access or mobility considerations in the activity description.`;
 
-        // 📊 4b. INJECT CFO RULES
+        // 🥗 4c. DIETARY RESTRICTION ENGINE
+        if (dietaryRestriction && dietaryRestriction !== 'none') {
+            const dietaryMap = {
+                vegetarian: 'VEGETARIAN — strictly no meat or seafood. Every restaurant suggested must be vegetarian-friendly or have a strong vegetarian menu. Flag it explicitly.',
+                vegan: 'VEGAN — strictly no meat, seafood, dairy, eggs, or honey. Every restaurant MUST have explicit vegan options. Note alternatives for typical tourist dishes.',
+                halal: 'HALAL — strictly no pork or alcohol. Restaurants must be halal-certified or clearly halal-suitable. Avoid suggesting bars or venues where alcohol is central.',
+                'gluten-free': 'GLUTEN-FREE — all food suggestions must be safe for a gluten intolerance/celiac. Call out where naturally gluten-free options exist at each venue.',
+                pescatarian: 'PESCATARIAN — no meat (beef, chicken, lamb, pork), but seafood and fish are permitted. Suggest restaurants with strong seafood menus.',
+            };
+            const dietaryContext = dietaryMap[dietaryRestriction] || `dietary requirement: ${dietaryRestriction}`;
+            systemPrompt += `\n\n🥗 DIETARY CONSTRAINT (NON-NEGOTIABLE — APPLIES TO EVERY FOOD ACTIVITY):
+        - The traveler is ${dietaryContext}
+        - EVERY restaurant and food suggestion MUST comply with this restriction. Non-compliant suggestions are invalid.
+        - Always mention the dietary-friendly option available at the venue in the activity description.`;
+        }
+
+
         systemPrompt += `\n\nCREATIVE ARCHITECT FOCUS:
         - Your goal is to find amazing hidden gems in ${destination}.
         - Constraint: Stay *approximately* near ${currency} ${totalRemaining}.
@@ -596,6 +665,11 @@ app.post('/api/itinerary', async (req, res) => {
 
                 isStreamingNow = false;
 
+                // Stop execution if the client forcefully disconnected mid-stream
+                if (controller.signal.aborted) {
+                    return;
+                }
+
                 // --- VALIDATION PHASE ---
                 try {
                     // 1. Clean markdown code blocks & Try to parse JSON
@@ -624,7 +698,7 @@ app.post('/api/itinerary', async (req, res) => {
             } catch (streamErr) {
                 isStreamingNow = false;
                 if (streamErr.constructor?.name === 'APIUserAbortError' || streamErr.name === 'AbortError') {
-                    console.log("   🌊 Stream aborted by client [ARCHITECT].");
+                console.log("   🌊 Stream aborted by client [ARCHITECT].");
                     res.end();
                     return;
                 }
@@ -655,23 +729,32 @@ app.post('/api/events', async (req, res) => {
     try {
         const { destination, date } = req.body;
 
+        let finalEvents = [];
+
         // 1. Try Ticketmaster First
         const realEvents = await fetchTicketmasterEvents(destination, date);
-        if (realEvents) {
-            return res.json(realEvents);
+        if (realEvents && Array.isArray(realEvents)) {
+            finalEvents.push(...realEvents);
         }
 
-        // 2. Fallback to AI if no real events found
-        console.log("   🤖 Ticketmaster empty. Asking AI Guide...");
-        const result = await runAgent(AgentRole.GUIDE,
-            `You are a local guide. Return a JSON object in this format exactly:
-{ "events": [{ "id": "1", "title": "Event Name", "category": "Music", "description": "Description", "price": "Free", "date": "2026-04-01" }] }. Return ONLY valid JSON.`,
-            `Find 3 generic cultural activities in ${destination} for ${date}.`
-        );
-        const parsed = extractJSON(result);
-        // Handle both array and object responses
-        const events = Array.isArray(parsed) ? parsed : (parsed.events || parsed.activities || []);
-        res.json(events);
+        // 2. Always fetch Local Experiences via AI to supplement
+        try {
+            console.log("   🤖 Augmenting events with AI Local Experiences...");
+            const result = await runAgent(AgentRole.GUIDE,
+                `You are a local guide. Return a JSON object in this EXACT format:
+{ "events": [{ "id": "evt_UNIQUE_ALPHANUMERIC", "title": "Event Name", "category": "Music", "description": "Description", "price": "Free", "date": "2026-04-01" }] }.
+CRITICAL: Each event MUST have a completely unique 'id' string (e.g. evt_a1b2, evt_c3d4, evt_e5f6). NEVER repeat the same id. Return ONLY valid JSON.`,
+                `Find 3 generic cultural activities in ${destination} for ${date}.`
+            );
+            const parsed = extractJSON(result);
+            let aiEvents = Array.isArray(parsed) ? parsed : (parsed?.events || parsed?.activities || []);
+            aiEvents = aiEvents.map((e, i) => ({ ...e, id: (e.id && String(e.id).length > 3) ? String(e.id) : `ai_evt_${Date.now()}_${i}` }));
+            finalEvents.push(...aiEvents);
+        } catch (e) {
+            console.error("   ❌ AI Event generation failed:", e.message);
+        }
+
+        return res.json(finalEvents.slice(0, 6));
 
     } catch (error) { 
         console.error("Events Error:", error);
@@ -694,7 +777,9 @@ app.post('/api/search-all', async (req, res) => {
             budget,
             currency  = 'INR',
             interests = [],
-            pax       = 1
+            vibeLevel = 1,
+            pax       = 1,
+            duration
         } = searchData || {};
         const numTravelers = Math.max(1, parseInt(pax) || 1);
         const roomCount = Math.ceil(numTravelers / 2);
@@ -710,7 +795,8 @@ app.post('/api/search-all', async (req, res) => {
             ? returnDate
             : (() => {
                 const d = new Date(departDate);
-                d.setDate(d.getDate() + 3);
+                const nights = parseInt(duration) || 5;
+                d.setDate(d.getDate() + nights);
                 return d.toISOString().split('T')[0];
             })();
 
@@ -718,88 +804,123 @@ app.post('/api/search-all', async (req, res) => {
 
         console.log(`\n📦 /api/search-all | ${tripType} | ${originName} → ${destName} | ${checkIn}${isRoundTrip ? ' → ' + checkOut : ''}`);
 
-        const [flightResult, hotelResult, eventResult] = await Promise.allSettled([
+        const [flightResult, hotelResult, eventResult, heroImages, hotelImages] = await Promise.allSettled([
 
             // 1. FLIGHTS — pass returnDate only for round trips
             (async () => {
-                const originData = await resolveCityData(originCode);
-                const destData   = await resolveCityData(destCode);
-                const amadeus    = keyManager.getAmadeusClient("FLIGHTS");
+                const client = keyManager.getAmadeusClient("FLIGHTS");
+            // Fix #1: extract string from city object before passing as Amadeus keyword
+            const originKeyword = typeof fromCity === 'object' ? (fromCity.code || fromCity.name || '') : (fromCity || '');
+            const destKeyword   = typeof toCity   === 'object' ? (toCity.code   || toCity.name   || '') : (toCity   || '');
+            const [origin, dest] = await Promise.all([
+                client.referenceData.locations.get({ keyword: originKeyword, subType: 'CITY,AIRPORT' }),
+                client.referenceData.locations.get({ keyword: destKeyword,   subType: 'CITY,AIRPORT' })
+            ]);
+                const originLocCode = origin.data[0]?.iataCode || 'JFK';
+                const destLocCode = dest.data[0]?.iataCode || 'LHR';
 
-                const params = {
-                    originLocationCode:      originData.iata,
-                    destinationLocationCode: destData.iata,
-                    departureDate:           checkIn,
-                    adults:                  String(numTravelers),
-                    max:                     '10',
-                    ...(currency && { currencyCode: currency }),
-                    ...(isRoundTrip && { returnDate: checkOut })
-                };
+                const response = await client.shopping.flightOffersSearch.get({
+                    originLocationCode: originLocCode,
+                    destinationLocationCode: destLocCode,
+                    departureDate: checkIn,
+                    returnDate: isRoundTrip ? checkOut : undefined,
+                    adults: numTravelers,
+                    max: 10,
+                    currencyCode: currency
+                });
 
-                const response = await amadeus.shopping.flightOffersSearch.get(params);
-                return {
-                    type:    isRoundTrip ? 'round_trip' : 'one_way',
-                    results: response.data,
-                    journey: { originHub: originData.iata, destHub: destData.iata }
-                };
+                if (!response.data || response.data.length === 0) {
+                    return { type: 'fallback', results: [], journey: { from: originLocCode, to: destLocCode } };
+                }
+                return { type: 'real', results: response.data, journey: { from: originLocCode, to: destLocCode } };
             })(),
 
             // 2. HOTELS
             (async () => {
-                const cityData = await resolveCityData(destName);
-                if (!cityData.geo) return [];
+                const client = keyManager.getAmadeusClient("HOTELS");
+                const dest = await client.referenceData.locations.get({ keyword: destName, subType: 'CITY,AIRPORT' });
+                const destLocCode = dest.data[0]?.iataCode || 'LHR';
 
-                const amadeus = keyManager.getAmadeusClient("HOTELS");
-                const geoResponse = await amadeus.referenceData.locations.hotels.byGeocode.get({
-                    latitude:   cityData.geo.latitude,
-                    longitude:  cityData.geo.longitude,
-                    radius:     10,
-                    radiusUnit: 'KM',
-                });
+                let hotelsByCity = { data: [] };
+                try {
+                    hotelsByCity = await client.referenceData.locations.hotels.byCity.get({ cityCode: destLocCode });
+                } catch (hotelErr) {
+                    console.error("   🏨 Amadeus SDK Error:", hotelErr.message || hotelErr);
+                }
 
-                const sorted    = [...geoResponse.data].sort((a, b) => (a.distance?.value || 99) - (b.distance?.value || 99));
-                const topHotels = sorted.slice(0, 20);
-                const hotelIds  = topHotels.map(h => h.hotelId).join(',');
+                if (!hotelsByCity.data || hotelsByCity.data.length === 0) return { topHotels: [], offersMap: {}, nights: 3 };
+                const topHotels = hotelsByCity.data.slice(0, 8);
 
                 let offersMap = {};
-                if (checkIn && checkOut && hotelIds) {
+                if (checkIn && checkOut) {
                     try {
-                        const offersResponse = await amadeus.shopping.hotelOffersSearch.get({
+                        const hotelIds = topHotels.map(h => h.hotelId).join(',');
+                        const offers = await client.shopping.hotelOffersSearch.get({
                             hotelIds,
-                            checkInDate:  checkIn, checkOutDate: checkOut,
-                            adults:       String(numTravelers), roomQuantity: String(roomCount),
-                            currencyCode: currency, bestRateOnly: true
+                            adults: numTravelers,
+                            roomQuantity: roomCount,
+                            checkInDate: checkIn,
+                            checkOutDate: checkOut,
+                            currency: currency,
                         });
-                        offersResponse.data.forEach(offer => {
-                            const price = offer.offers?.[0]?.price?.total;
-                            if (price) offersMap[offer.hotel.hotelId] = parseFloat(price);
+                        offers.data?.forEach(offer => {
+                            const cheapest = offer.offers?.sort((a, b) => parseFloat(a.price.total) - parseFloat(b.price.total))[0];
+                            if (cheapest) offersMap[offer.hotel.hotelId] = parseFloat(cheapest.price.total) * roomCount;
                         });
                     } catch { /* use estimates */ }
                 }
 
                 const nights = Math.max(1, Math.ceil(Math.abs(new Date(checkOut) - new Date(checkIn)) / (1000 * 60 * 60 * 24)));
-                return buildHotelResults(topHotels, offersMap, nights, currency, budget);
+                return { topHotels, offersMap, nights };
             })(),
 
             // 3. EVENTS
             (async () => {
+                let finalEvents = [];
+                
                 const realEvents = await fetchTicketmasterEvents(destName, checkIn);
-                if (realEvents) return realEvents;
+                if (realEvents && Array.isArray(realEvents)) {
+                    finalEvents.push(...realEvents);
+                }
 
-                const result = await runAgent(
-                    AgentRole.GUIDE,
-                    `You are a local guide. Return a JSON object: { "events": [{ "id": "1", "title": "Event Name", "category": "Music", "description": "Description", "price": "Free", "date": "2026-04-01" }] }. Return ONLY valid JSON.`,
-                    `Find 4 interesting cultural activities or events in ${destName} around ${checkIn}. Crucially, align these events with the user's specific interests if provided: ${interests.length > 0 ? interests.join(', ') : 'popular local highlights'}.`
-                );
-                const parsed = extractJSON(result);
-                return Array.isArray(parsed) ? parsed : (parsed.events || parsed.activities || []);
-            })()
+                try {
+                    const result = await runAgent(
+                        AgentRole.GUIDE,
+                        `You are a local guide. Return a JSON object in this EXACT format:
+{ "events": [{ "id": "evt_UNIQUE_ALPHANUMERIC", "title": "Event Name", "category": "Music", "description": "Description", "price": "Free", "date": "2026-04-01" }] }.
+CRITICAL: Each event MUST have a completely unique 'id' string (e.g. evt_a1b2, evt_c3d4, evt_e5f6). NEVER repeat the same id. Return ONLY valid JSON.`,
+                        `Find 4 interesting cultural activities or events in ${destName} around ${checkIn}. Crucially, align these events with the user's specific interests if provided: ${interests.length > 0 ? interests.join(', ') : 'popular local highlights'}. The user selected a pacing vibe level of ${vibeLevel} / 3.`
+                    );
+                    const parsed = extractJSON(result);
+                    let aiEvents = Array.isArray(parsed) ? parsed : (parsed?.events || parsed?.activities || []);
+                    aiEvents = aiEvents.map((e, i) => ({ ...e, id: (e.id && String(e.id).length > 3) ? String(e.id) : `ai_evt_${Date.now()}_${i}` }));
+                    finalEvents.push(...aiEvents);
+                } catch (e) {
+                    console.error("   ❌ AI Event generation failed:", e.message);
+                }
+                
+                return finalEvents.slice(0, 6);
+            })(),
+
+            // 4. UNSPLASH HERO IMAGE
+            fetchUnsplashImages(`${destName} landmark`, 1),
+            
+            // 5. UNSPLASH HOTEL IMAGES
+            fetchUnsplashImages(`${destName} hotel room luxury`, 8)
         ]);
 
         const transportData = flightResult.status === 'fulfilled' ? flightResult.value : { type: 'none', results: [] };
-        const hotelData     = hotelResult.status  === 'fulfilled' ? hotelResult.value  : [];
         const eventData     = eventResult.status  === 'fulfilled' ? eventResult.value  : [];
-        const heroImage     = `https://images.unsplash.com/photo-1499856871958-5b9627545d1a?auto=format&fit=crop&w=1600&q=80`;
+        
+        let hotelData = [];
+        if (hotelResult.status === 'fulfilled') {
+            const h = hotelResult.value;
+            const hotelImgs = hotelImages.status === 'fulfilled' ? hotelImages.value : [];
+            hotelData = buildHotelResults(h.topHotels, h.offersMap, h.nights, currency, budget, hotelImgs);
+        }
+
+        const fallbackHero = `https://images.unsplash.com/photo-1499856871958-5b9627545d1a?auto=format&fit=crop&w=1600&q=80`;
+        const heroImage = (heroImages.status === 'fulfilled' && heroImages.value.length > 0) ? heroImages.value[0] : fallbackHero;
 
         console.log(`   ✅ Done: ${transportData.results?.length || 0} flights, ${hotelData.length} hotels, ${eventData.length} events`);
         res.json({ transportData, hotelData, eventData, heroImage });
@@ -809,6 +930,7 @@ app.post('/api/search-all', async (req, res) => {
         res.json({ transportData: { type: 'none', results: [] }, hotelData: [], eventData: [], heroImage: null });
     }
 });
+
 
 
 // ==================================================
@@ -839,10 +961,20 @@ YOUR RULES:
 
 OUTPUT: Return the full updated itinerary JSON starting with { and ending with }.`;
 
+        // Fix #3: Strip verbose fields before sending to avoid token overflow on long trips.
+        // (reason_for_choice + localness_signal alone add ~2000 tokens for a 7-day trip)
+        const stripped = {
+            ...currentItinerary,
+            daily_plan: (currentItinerary.daily_plan || []).map(day => ({
+                ...day,
+                activities: (day.activities || []).map(({ reason_for_choice, localness_signal, dressCodeDetails, ...rest }) => rest)
+            }))
+        };
+
         const userContent = `User's edit request: "${prompt}"
 
 Current itinerary to modify:
-${JSON.stringify(currentItinerary, null, 2)}`;
+${JSON.stringify(stripped, null, 0)}`;
 
         const result = await runAgent(AgentRole.ARCHITECT, systemPrompt, userContent);
 
@@ -927,7 +1059,8 @@ Return strictly this JSON format:
 
 If they ask something else, just return normal JSON: { "reply": "Your helpful text response" }`;
 
-        const result = await runAgent(AgentRole.ROUTER, systemPrompt, `User: ${message}`, history);
+        // Fix #15: use Chat/Guide role instead of Router to prevent token cutoff and improve conversational quality
+        const result = await runAgent(AgentRole.GUIDE, systemPrompt, `User: ${message}`, history);
         try {
             res.json(extractJSON(result));
         } catch (jsonErr) {

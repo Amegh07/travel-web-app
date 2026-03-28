@@ -122,9 +122,11 @@ const DayDetailPage = ({ dayNumber: propDayNumber, tripId: propTripId, onClose }
             const cache = localStorage.getItem('travex_results_cache');
             const searchDataStr = localStorage.getItem('travex_search') || sessionStorage.getItem('travex_search');
             
+            const searchData = searchDataStr ? JSON.parse(searchDataStr) : {};
             const payload = {
-                searchData: searchDataStr ? JSON.parse(searchDataStr) : {},
-                resultsData: cache ? JSON.parse(cache) : {}
+                searchData,
+                resultsData: cache ? JSON.parse(cache) : {},
+                shareId: searchData.shareId || null
             };
 
             const response = await fetch(`${API_BASE}/api/save-trip`, {
@@ -238,10 +240,8 @@ const DayDetailPage = ({ dayNumber: propDayNumber, tripId: propTripId, onClose }
                         {/* Buffer Toggle */}
                         {viewMode !== 'printable' && (
                             <div className="flex items-center justify-between p-4 bg-[#FDFCFA] rounded-2xl border border-[#E8E4DC]">
-                                <span className="text-xs font-bold uppercase tracking-widest">Adjust Schedule</span>
-                                <button className="flex items-center gap-2 text-xs font-bold text-[#B89A6A] hover:text-[#1C1916] transition-colors">
-                                    <Plus size={14} /> Add 15m Buffer Between Items
-                                </button>
+                                <span className="text-xs font-bold uppercase tracking-widest">Schedule Overview</span>
+                                <span className="text-xs text-[#9C9690]">{data.items.length} activities planned</span>
                             </div>
                         )}
 
@@ -508,7 +508,7 @@ const DayDetailPage = ({ dayNumber: propDayNumber, tripId: propTripId, onClose }
                     destination={destName} 
                     aiItinerary={fullItinerary} 
                     setAiItinerary={handleItineraryUpdate} 
-                    currentDay={_dayNumber}
+                    currentDay={Number(_dayNumber)}
                     journeySymbol={searchDataObj.currency === 'EUR' ? '€' : searchDataObj.currency === 'GBP' ? '£' : searchDataObj.currency === 'INR' ? '₹' : '$'}
                 />
             )}
