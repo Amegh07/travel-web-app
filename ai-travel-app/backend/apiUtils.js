@@ -243,32 +243,6 @@ class HotelCache {
 }
 
 // ==========================================
-// 🛡️ GRACEFUL HOTEL FALLBACK
-// ==========================================
-export function createHotelFallbacks(count = 6, destination = "City", pricePerNight = 2000, currency = "INR") {
-  const currencySymbol = currency === 'USD' ? '$' : currency === 'EUR' ? '€' : '₹';
-  const hotelNames = [
-    "The Grand Plaza",
-    "Riverside Resort",
-    "Heritage Heights",
-    "Sunset Paradise",
-    "Royal Comfort Inn",
-    "Marina Bay Suites"
-  ];
-
-  return Array.from({ length: count }).map((_, i) => ({
-    id: `fallback_hotel_${i + 1}`,
-    name: hotelNames[i] || `Hotel ${i + 1}`,
-    image: `https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&w=800&q=80`,
-    rating: (3.8 + (Math.random() * 1.2)).toFixed(1),
-    price: `${currencySymbol}${Math.floor(pricePerNight + (Math.random() * 1000 - 500))}/night`,
-    distance: `${(Math.random() * 5 + 0.5).toFixed(1)} KM from center`,
-    isApproximation: true,
-    isEstimated: true
-  }));
-}
-
-// ==========================================
 // 📤 ERROR FORMATTER (better logging)
 // ==========================================
 export function formatApiError(error, operationName = "API") {

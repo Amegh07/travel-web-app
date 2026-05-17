@@ -95,6 +95,7 @@ const ResultsPage = ({ searchData, onBack }) => {
     });
     const [loading, setLoading] = useState(() => initialCache.hotels?.length > 0 ? false : true);
     const [heroImage, setHeroImage] = useState(() => initialCache.heroImage || null);
+    const [searchWarnings, setSearchWarnings] = useState(() => initialCache.searchWarnings || []);
 
     const [isFlightModalOpen, setIsFlightModalOpen] = useState(false);
     const [isHotelModalOpen, setIsHotelModalOpen] = useState(false);
@@ -141,11 +142,11 @@ const ResultsPage = ({ searchData, onBack }) => {
         const cacheObj = {
             lastSearchDestination: destName,
             transport, hotels, events, heroImage,
-            confirmedFlight, confirmedHotel, addedEvents,
+            confirmedFlight, confirmedHotel, addedEvents, searchWarnings,
             miniMapData, aiItinerary
         };
         localStorage.setItem('travex_results_cache', JSON.stringify(cacheObj));
-    }, [destName, transport, hotels, events, heroImage, confirmedFlight, confirmedHotel, addedEvents, miniMapData, aiItinerary]);
+    }, [destName, transport, hotels, events, heroImage, confirmedFlight, confirmedHotel, addedEvents, searchWarnings, miniMapData, aiItinerary]);
 
     const [toastMsg, setToastMsg] = useState(null);
     const showToast = (msg) => {
@@ -312,6 +313,7 @@ const ResultsPage = ({ searchData, onBack }) => {
             setHotels([]);
             setTransport({ type: 'none', results: [] });
             setEvents([]);
+            setSearchWarnings([]);
             lastSearchCity.current = searchData.toCity;
         } else if (hotels.length > 0) {
             setLoading(false);
@@ -327,6 +329,7 @@ const ResultsPage = ({ searchData, onBack }) => {
                 setHotels(results.hotelData || []);
                 const rawEvents = results.eventData || [];
                 setEvents(Array.isArray(rawEvents) ? rawEvents : (rawEvents.events || rawEvents.activities || []));
+                setSearchWarnings(results.searchWarnings || []);
             } catch (err) {
                 console.error("Aggregation Fetch Error:", err);
             } finally {
@@ -627,6 +630,20 @@ const ResultsPage = ({ searchData, onBack }) => {
                         </button>
                     </div>
 
+                    {searchWarnings.length > 0 && (
+                        <div className="bg-[#FFF8F2] border border-[#E7C9A9] rounded-2xl p-5 space-y-2 shadow-[0_1px_4px_rgba(28,25,22,0.05)]">
+                            <div className="flex items-center gap-2 text-[#8C5A2B] text-xs font-semibold tracking-[0.18em] uppercase">
+                                <Globe className="w-4 h-4" />
+                                Live Provider Status
+                            </div>
+                            {searchWarnings.map((warning, index) => (
+                                <p key={index} className="text-sm text-[#5A554A]">
+                                    {warning}
+                                </p>
+                            ))}
+                        </div>
+                    )}
+
                     {/* FLIGHTS */}
                     <div className="bg-[#FDFCFA] shadow-[0_1px_4px_rgba(28,25,22,0.05)] border border-[#E8E4DC] rounded-3xl p-8 relative transition-colors">
                         <div className="flex items-center gap-3 mb-8">
@@ -643,11 +660,20 @@ const ResultsPage = ({ searchData, onBack }) => {
                                 </div>
                             </div>
 
-                            {sortedFlights.slice(0, 2).map((f, i) => <FlightCard key={i} flight={f} isSelected={confirmedFlight?.id === f.id} onSelect={toggleFlight} />)}
+                            {sortedFlights.length > 0 ? (
+                                <>
+                                    {sortedFlights.slice(0, 2).map((f, i) => <FlightCard key={i} flight={f} isSelected={confirmedFlight?.id === f.id} onSelect={toggleFlight} />)}
 
-                            <button onClick={() => setIsFlightModalOpen(true)} className="w-full mt-2 py-4 rounded-xl border border-dashed border-[#E8E4DC] text-[#9C9690] hover:text-[#1C1916] hover:border-[#B89A6A]/50 bg-[#FDFCFA] transition-all text-[10px] tracking-widest uppercase font-medium flex items-center justify-center gap-2">
-                                View all {sortedFlights.length} flights <ChevronDown className="w-4 h-4" />
-                            </button>
+                                    <button onClick={() => setIsFlightModalOpen(true)} className="w-full mt-2 py-4 rounded-xl border border-dashed border-[#E8E4DC] text-[#9C9690] hover:text-[#1C1916] hover:border-[#B89A6A]/50 bg-[#FDFCFA] transition-all text-[10px] tracking-widest uppercase font-medium flex items-center justify-center gap-2">
+                                        View all {sortedFlights.length} flights <ChevronDown className="w-4 h-4" />
+                                    </button>
+                                </>
+                            ) : (
+                                <div className="rounded-2xl border border-dashed border-[#E8E4DC] bg-[#FDFCFA] px-5 py-8 text-center">
+                                    <p className="serif-text text-xl font-light text-[#1C1916]">Flights unavailable right now</p>
+                                    <p className="mt-2 text-sm text-[#9C9690]">The app is waiting on Amadeus to recover instead of showing made-up fares.</p>
+                                </div>
+                            )}
                         </div>
                     </div>
 
@@ -660,9 +686,16 @@ const ResultsPage = ({ searchData, onBack }) => {
                             </div>
                         </div>
 
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-                            {sortedHotels.slice(0, showAllHotels ? 13 : 3).map((h, i) => <HotelCard key={i} hotel={h} nights={nights} isSelected={confirmedHotel?.id === h.id} onSelect={toggleHotel} />)}
-                        </div>
+                        {sortedHotels.length > 0 ? (
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                                {sortedHotels.slice(0, showAllHotels ? 13 : 3).map((h, i) => <HotelCard key={i} hotel={h} nights={nights} isSelected={confirmedHotel?.id === h.id} onSelect={toggleHotel} />)}
+                            </div>
+                        ) : (
+                            <div className="rounded-2xl border border-dashed border-[#E8E4DC] bg-[#FDFCFA] px-5 py-8 text-center">
+                                <p className="serif-text text-xl font-light text-[#1C1916]">Hotels unavailable right now</p>
+                                <p className="mt-2 text-sm text-[#9C9690]">No synthetic stays are being shown. The backend is reporting the live provider outage directly.</p>
+                            </div>
+                        )}
                         
                         {sortedHotels.length > 3 && (
                             <button 

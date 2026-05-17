@@ -61,8 +61,7 @@ const GROQ_KEYS = [
 
 const AMADEUS_KEYS = [
   { id: "ama-1", clientId: getEnvVar("AMA_ID_1"), clientSecret: getEnvVar("AMA_SEC_1"), scope: "FLIGHTS" },
-  // AMA_ID_2 has a server-side issue (500 errors). Using AMA_ID_1 for Hotels too (byGeocode bypass)
-  { id: "ama-hotels", clientId: getEnvVar("AMA_ID_1"), clientSecret: getEnvVar("AMA_SEC_1"), scope: "HOTELS" },
+  { id: "ama-hotels", clientId: getEnvVar("AMA_ID_2"), clientSecret: getEnvVar("AMA_SEC_2"), scope: "HOTELS" },
 ];
 
 // --- 2. KEY MANAGER ---

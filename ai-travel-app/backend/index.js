@@ -10,7 +10,6 @@ import {
   amadeusRateLimiter,
   amadeusRequestQueue,
   createCityFallback,
-  createHotelFallbacks,
   formatApiError
 } from './apiUtils.js';
 
@@ -228,6 +227,207 @@ function buildHotelResults(topHotels, offersMap, nights, currency, budget, unspl
     });
 }
 
+function createProviderIssue(provider, operation, error) {
+    const errorInfo = formatApiError(error, operation);
+    return {
+        provider,
+        operation,
+        status: 'UNAVAILABLE',
+        statusCode: errorInfo.statusCode,
+        message: errorInfo.message
+    };
+}
+
+let amadeusHealthCache = {
+    timestamp: 0,
+    result: {
+        status: 'UNKNOWN',
+        checkedAt: null,
+        details: 'Health check has not run yet.'
+    }
+};
+
+async function getAmadeusHealth(forceRefresh = false) {
+    const now = Date.now();
+    if (!forceRefresh && now - amadeusHealthCache.timestamp < 120000) {
+        return amadeusHealthCache.result;
+    }
+
+    try {
+        const client = keyManager.getAmadeusClient("FLIGHTS");
+        const response = await client.referenceData.locations.get({
+            keyword: 'London',
+            subType: 'CITY,AIRPORT'
+        });
+
+        amadeusHealthCache = {
+            timestamp: now,
+            result: {
+                status: response.data?.length ? 'ACTIVE' : 'DEGRADED',
+                checkedAt: new Date(now).toISOString(),
+                details: response.data?.length
+                    ? 'Live city lookup succeeded.'
+                    : 'Live city lookup returned no records.'
+            }
+        };
+    } catch (error) {
+        const issue = createProviderIssue('AMADEUS', 'Health Check', error);
+        amadeusHealthCache = {
+            timestamp: now,
+            result: {
+                status: 'UNAVAILABLE',
+                checkedAt: new Date(now).toISOString(),
+                details: issue.message,
+                statusCode: issue.statusCode
+            }
+        };
+    }
+
+    return amadeusHealthCache.result;
+}
+
+async function searchFlights({ origin, destination, date, returnDate, tripType, currency, adults }) {
+    const numTravelers = Math.max(1, parseInt(adults) || 1);
+    const originData = await resolveCityData(origin);
+    const destData   = await resolveCityData(destination);
+
+    try {
+        const result = await retryWithBackoff(
+            async () => {
+                const amadeus = keyManager.getAmadeusClient("FLIGHTS");
+                const params = {
+                    originLocationCode: originData.iata,
+                    destinationLocationCode: destData.iata,
+                    departureDate: date,
+                    adults: String(numTravelers),
+                    max: '10',
+                    ...(currency && { currencyCode: currency }),
+                    ...(tripType === 'round' && returnDate && { returnDate })
+                };
+                return await amadeus.shopping.flightOffersSearch.get(params);
+            },
+            3,
+            1000,
+            {
+                operationName: `Flight Search (${origin}->${destination})`,
+                rateLimiter: amadeusRateLimiter,
+                requestQueue: amadeusRequestQueue
+            }
+        );
+
+        return {
+            type: tripType === 'round' ? 'round_trip' : 'one_way',
+            results: result.data,
+            journey: { originHub: originData.iata, destHub: destData.iata },
+            provider: { name: 'AMADEUS', status: 'ACTIVE' }
+        };
+    } catch (err) {
+        const issue = createProviderIssue('AMADEUS', 'Flight Search', err);
+        console.error(`❌ Flight Search Error [${issue.statusCode}]: ${issue.message}`);
+        return {
+            type: 'unavailable',
+            results: [],
+            journey: { originHub: originData.iata, destHub: destData.iata },
+            provider: issue
+        };
+    }
+}
+
+async function searchHotels({ targetCity, totalBudget, currency, checkIn, checkOut, numTravelers, unsplashImages = [] }) {
+    const roomCount = Math.ceil(numTravelers / 2);
+    const nights = (checkIn && checkOut)
+        ? Math.max(1, Math.ceil(Math.abs(new Date(checkOut) - new Date(checkIn)) / (1000 * 60 * 60 * 24)))
+        : 1;
+
+    try {
+        const cached = hotelCacheManager.get(targetCity, checkIn, checkOut, numTravelers, currency);
+        if (cached && cached.length > 0) {
+            console.log(`   ✅ Using cached hotel results for "${targetCity}"`);
+            return {
+                results: cached,
+                provider: { name: 'AMADEUS', status: 'ACTIVE', source: 'CACHE' }
+            };
+        }
+
+        const cityData = await resolveCityData(targetCity);
+        if (!cityData.geo) throw new Error('Could not resolve Geocode for city.');
+
+        const geoData = await retryWithBackoff(
+            async () => {
+                const amadeus = keyManager.getAmadeusClient('HOTELS');
+                const response = await amadeus.referenceData.locations.hotels.byGeocode.get({
+                    latitude: cityData.geo.latitude,
+                    longitude: cityData.geo.longitude,
+                    radius: 10,
+                    radiusUnit: 'KM'
+                });
+                return response.data;
+            },
+            3,
+            1000,
+            {
+                operationName: `Hotel Geocode Search (${targetCity})`,
+                rateLimiter: amadeusRateLimiter,
+                requestQueue: amadeusRequestQueue
+            }
+        );
+
+        const topHotels = [...geoData]
+            .sort((a, b) => (a.distance?.value || 99) - (b.distance?.value || 99))
+            .slice(0, 20);
+        const hotelIds = topHotels.map(h => h.hotelId).join(',');
+
+        let offersMap = {};
+        if (checkIn && checkOut && hotelIds) {
+            try {
+                const offersData = await retryWithBackoff(
+                    async () => {
+                        const amadeus = keyManager.getAmadeusClient('HOTELS');
+                        const response = await amadeus.shopping.hotelOffersSearch.get({
+                            hotelIds,
+                            checkInDate: checkIn,
+                            checkOutDate: checkOut,
+                            adults: String(numTravelers),
+                            roomQuantity: String(roomCount),
+                            currencyCode: currency,
+                            bestRateOnly: true
+                        });
+                        return response.data;
+                    },
+                    2,
+                    1000,
+                    {
+                        operationName: `Hotel Offers Search (${targetCity})`,
+                        rateLimiter: amadeusRateLimiter,
+                        requestQueue: amadeusRequestQueue
+                    }
+                );
+
+                offersData.forEach(offer => {
+                    const price = offer.offers?.[0]?.price?.total;
+                    if (price) offersMap[offer.hotel.hotelId] = parseFloat(price);
+                });
+            } catch (err) {
+                console.warn(`⚠️ Hotel offers search failed, using estimates: ${err.message}`);
+            }
+        }
+
+        const results = buildHotelResults(topHotels, offersMap, nights, currency, totalBudget, unsplashImages);
+        hotelCacheManager.set(targetCity, checkIn, checkOut, numTravelers, currency, results);
+        return {
+            results,
+            provider: { name: 'AMADEUS', status: 'ACTIVE' }
+        };
+    } catch (error) {
+        const issue = createProviderIssue('AMADEUS', 'Hotel Search', error);
+        console.error(`❌ Hotel Search Error [${issue.statusCode}]: ${issue.message}`);
+        return {
+            results: [],
+            provider: issue
+        };
+    }
+}
+
 // --- 🛠️ HELPER: UNSPLASH FETCH ---
 async function fetchUnsplashImages(query, count = 1) {
     if (!UNSPLASH_ACCESS_KEY) return [];
@@ -336,46 +536,28 @@ app.get('/api/city-search', async (req, res) => {
 app.get('/api/flights', async (req, res) => {
     try {
         const { origin, destination, date, returnDate, tripType, currency, adults } = req.query;
-        const numTravelers = Math.max(1, parseInt(adults) || 1);
-        console.log(`✈️  Flight Search: ${origin} -> ${destination} | type: ${tripType || 'one-way'} | return: ${returnDate || 'N/A'} | pax: ${numTravelers}`);
-
-        const originData = await resolveCityData(origin);
-        const destData   = await resolveCityData(destination);
-
-        const result = await retryWithBackoff(
-            async () => {
-                const amadeus = keyManager.getAmadeusClient("FLIGHTS");
-                const params = {
-                    originLocationCode:      originData.iata,
-                    destinationLocationCode: destData.iata,
-                    departureDate:           date,
-                    adults:                  String(numTravelers),
-                    max:                     '10',
-                    ...(currency && { currencyCode: currency }),
-                    ...(tripType === 'round' && returnDate && { returnDate })
-                };
-                return await amadeus.shopping.flightOffersSearch.get(params);
-            },
-            3,
-            1000,
-            {
-                operationName: `Flight Search (${origin}->${destination})`,
-                rateLimiter: amadeusRateLimiter,
-                requestQueue: amadeusRequestQueue
-            }
-        );
-
-        res.json({
-            type:    tripType === 'round' ? 'round_trip' : 'one_way',
-            results: result.data,
-            journey: { originHub: originData.iata, destHub: destData.iata }
+        console.log(`✈️  Flight Search: ${origin} -> ${destination} | type: ${tripType || 'one-way'} | return: ${returnDate || 'N/A'} | pax: ${Math.max(1, parseInt(adults) || 1)}`);
+        const result = await searchFlights({
+            origin,
+            destination,
+            date,
+            returnDate,
+            tripType: tripType || 'one-way',
+            currency,
+            adults
         });
+        res.json(result);
     } catch (err) {
-        const errorInfo = formatApiError(err, 'Flight Search');
+        const issue = createProviderIssue('AMADEUS', 'Flight Search', err);
         console.error(
-            `❌ Flight Search Error [${errorInfo.statusCode}]: ${errorInfo.message}`
+            `❌ Flight Search Error [${issue.statusCode}]: ${issue.message}`
         );
-        res.json({ type: 'none', results: [] });
+        res.json({
+            type: 'unavailable',
+            results: [],
+            journey: null,
+            provider: issue
+        });
     }
 });
 
@@ -387,105 +569,23 @@ app.get('/api/hotels', async (req, res) => {
     const checkIn     = req.query.checkIn;
     const checkOut    = req.query.checkOut;
     const numTravelers = Math.max(1, parseInt(req.query.adults) || 1);
-    const roomCount    = Math.ceil(numTravelers / 2);
-
-    const nights = (checkIn && checkOut)
-        ? Math.max(1, Math.ceil(Math.abs(new Date(checkOut) - new Date(checkIn)) / (1000 * 60 * 60 * 24)))
-        : 1;
 
     try {
-        // 1. CHECK CACHE FIRST
-        const cached = hotelCacheManager.get(targetCity, checkIn, checkOut, numTravelers, currency);
-        if (cached) {
-            console.log(`   ✅ Using cached hotel results for "${targetCity}"`);
-            return res.json(cached);
-        }
-
-        const cityData = await resolveCityData(targetCity);
-        if (!cityData.geo) throw new Error('Could not resolve Geocode for city.');
-
-        const geoData = await retryWithBackoff(
-            async () => {
-                const amadeus = keyManager.getAmadeusClient('HOTELS');
-                const response = await amadeus.referenceData.locations.hotels.byGeocode.get({
-                    latitude: cityData.geo.latitude,
-                    longitude: cityData.geo.longitude,
-                    radius: 10,
-                    radiusUnit: 'KM'
-                });
-                return response.data;
-            },
-            3,
-            1000,
-            {
-                operationName: `Hotel Geocode Search (${targetCity})`,
-                rateLimiter: amadeusRateLimiter,
-                requestQueue: amadeusRequestQueue
-            }
-        );
-
-        const topHotels = [...geoData]
-            .sort((a, b) => (a.distance?.value || 99) - (b.distance?.value || 99))
-            .slice(0, 20);
-        const hotelIds = topHotels.map(h => h.hotelId).join(',');
-
-        let offersMap = {};
-        if (checkIn && checkOut && hotelIds) {
-            try {
-                const offersData = await retryWithBackoff(
-                    async () => {
-                        const amadeus = keyManager.getAmadeusClient('HOTELS');
-                        const response = await amadeus.shopping.hotelOffersSearch.get({
-                            hotelIds,
-                            checkInDate: checkIn,
-                            checkOutDate: checkOut,
-                            adults: String(numTravelers),
-                            roomQuantity: String(roomCount),
-                            currencyCode: currency,
-                            bestRateOnly: true
-                        });
-                        return response.data;
-                    },
-                    2,
-                    1000,
-                    {
-                        operationName: `Hotel Offers Search (${targetCity})`,
-                        rateLimiter: amadeusRateLimiter,
-                        requestQueue: amadeusRequestQueue
-                    }
-                );
-
-                offersData.forEach(offer => {
-                    const price = offer.offers?.[0]?.price?.total;
-                    if (price) offersMap[offer.hotel.hotelId] = parseFloat(price);
-                });
-            } catch (err) {
-                console.warn(`⚠️ Hotel offers search failed, using estimates: ${err.message}`);
-            }
-        }
-
-        const results = buildHotelResults(topHotels, offersMap, nights, currency, totalBudget);
-        
-        // 2. CACHE THE RESULTS
-        hotelCacheManager.set(targetCity, checkIn, checkOut, numTravelers, currency, results);
-        
-        res.json(results);
+        const hotelSearch = await searchHotels({
+            targetCity,
+            totalBudget,
+            currency,
+            checkIn,
+            checkOut,
+            numTravelers
+        });
+        res.json(hotelSearch.results);
     } catch (error) {
-        const errorInfo = formatApiError(error, 'Hotel Search');
+        const issue = createProviderIssue('AMADEUS', 'Hotel Search', error);
         console.error(
-            `❌ Hotel Search Error [${errorInfo.statusCode}]: ${errorInfo.message}`
+            `❌ Hotel Search Error [${issue.statusCode}]: ${issue.message}`
         );
-        
-        // Graceful fallback: Return estimated hotels instead of empty array
-        const dailyBudget = totalBudget / Math.max(1, nights);
-        const estimatedPricePerNight = currency === 'USD' 
-            ? (dailyBudget >= 300 ? 150 : 80)
-            : currency === 'EUR'
-            ? (dailyBudget >= 250 ? 120 : 70)
-            : (dailyBudget >= 20000 ? 5000 : 2000);
-        
-        const fallbackHotels = createHotelFallbacks(6, targetCity, estimatedPricePerNight, currency);
-        res.json(fallbackHotels);
+        res.json([]);
     }
 });
 
@@ -944,73 +1044,24 @@ app.post('/api/search-all', async (req, res) => {
 
         const [flightResult, hotelResult, eventResult, heroImages, hotelImages] = await Promise.allSettled([
 
-            // 1. FLIGHTS — pass returnDate only for round trips
-            (async () => {
-                const client = keyManager.getAmadeusClient("FLIGHTS");
-            // Fix #1: extract string from city object before passing as Amadeus keyword
-            const originKeyword = typeof fromCity === 'object' ? (fromCity.code || fromCity.name || '') : (fromCity || '');
-            const destKeyword   = typeof toCity   === 'object' ? (toCity.code   || toCity.name   || '') : (toCity   || '');
-            const [origin, dest] = await Promise.all([
-                client.referenceData.locations.get({ keyword: originKeyword, subType: 'CITY,AIRPORT' }),
-                client.referenceData.locations.get({ keyword: destKeyword,   subType: 'CITY,AIRPORT' })
-            ]);
-                const originLocCode = origin.data[0]?.iataCode || 'JFK';
-                const destLocCode = dest.data[0]?.iataCode || 'LHR';
+            searchFlights({
+                origin: originCode,
+                destination: destCode,
+                date: checkIn,
+                returnDate: isRoundTrip ? checkOut : undefined,
+                tripType,
+                currency,
+                adults: numTravelers
+            }),
 
-                const response = await client.shopping.flightOffersSearch.get({
-                    originLocationCode: originLocCode,
-                    destinationLocationCode: destLocCode,
-                    departureDate: checkIn,
-                    returnDate: isRoundTrip ? checkOut : undefined,
-                    adults: numTravelers,
-                    max: 10,
-                    currencyCode: currency
-                });
-
-                if (!response.data || response.data.length === 0) {
-                    return { type: 'fallback', results: [], journey: { from: originLocCode, to: destLocCode } };
-                }
-                return { type: 'real', results: response.data, journey: { from: originLocCode, to: destLocCode } };
-            })(),
-
-            // 2. HOTELS
-            (async () => {
-                const client = keyManager.getAmadeusClient("HOTELS");
-                const dest = await client.referenceData.locations.get({ keyword: destName, subType: 'CITY,AIRPORT' });
-                const destLocCode = dest.data[0]?.iataCode || 'LHR';
-
-                let hotelsByCity = { data: [] };
-                try {
-                    hotelsByCity = await client.referenceData.locations.hotels.byCity.get({ cityCode: destLocCode });
-                } catch (hotelErr) {
-                    console.error("   🏨 Amadeus SDK Error:", hotelErr.message || hotelErr);
-                }
-
-                if (!hotelsByCity.data || hotelsByCity.data.length === 0) return { topHotels: [], offersMap: {}, nights: 3 };
-                const topHotels = hotelsByCity.data.slice(0, 8);
-
-                let offersMap = {};
-                if (checkIn && checkOut) {
-                    try {
-                        const hotelIds = topHotels.map(h => h.hotelId).join(',');
-                        const offers = await client.shopping.hotelOffersSearch.get({
-                            hotelIds,
-                            adults: numTravelers,
-                            roomQuantity: roomCount,
-                            checkInDate: checkIn,
-                            checkOutDate: checkOut,
-                            currency: currency,
-                        });
-                        offers.data?.forEach(offer => {
-                            const cheapest = offer.offers?.sort((a, b) => parseFloat(a.price.total) - parseFloat(b.price.total))[0];
-                            if (cheapest) offersMap[offer.hotel.hotelId] = parseFloat(cheapest.price.total) * roomCount;
-                        });
-                    } catch { /* use estimates */ }
-                }
-
-                const nights = Math.max(1, Math.ceil(Math.abs(new Date(checkOut) - new Date(checkIn)) / (1000 * 60 * 60 * 24)));
-                return { topHotels, offersMap, nights };
-            })(),
+            searchHotels({
+                targetCity: destName,
+                totalBudget: parseFloat(budget) || 5000,
+                currency,
+                checkIn,
+                checkOut,
+                numTravelers
+            }),
 
             // 3. EVENTS
             (async () => {
@@ -1047,25 +1098,76 @@ CRITICAL: Each event MUST have a completely unique 'id' string (e.g. evt_a1b2, e
             fetchUnsplashImages(`${destName} hotel room luxury`, 8)
         ]);
 
-        const transportData = flightResult.status === 'fulfilled' ? flightResult.value : { type: 'none', results: [] };
+        const transportData = flightResult.status === 'fulfilled'
+            ? flightResult.value
+            : {
+                type: 'unavailable',
+                results: [],
+                journey: {
+                    originHub: String(originCode || 'ORG').slice(0, 3).toUpperCase(),
+                    destHub: String(destCode || 'DST').slice(0, 3).toUpperCase()
+                },
+                provider: {
+                    provider: 'AMADEUS',
+                    operation: 'Flight Search',
+                    status: 'UNAVAILABLE',
+                    statusCode: 'unknown',
+                    message: flightResult.reason?.message || 'Flight provider request failed.'
+                }
+            };
         const eventData     = eventResult.status  === 'fulfilled' ? eventResult.value  : [];
-        
-        let hotelData = [];
-        if (hotelResult.status === 'fulfilled') {
-            const h = hotelResult.value;
-            const hotelImgs = hotelImages.status === 'fulfilled' ? hotelImages.value : [];
-            hotelData = buildHotelResults(h.topHotels, h.offersMap, h.nights, currency, budget, hotelImgs);
-        }
+        const hotelImgs = hotelImages.status === 'fulfilled' ? hotelImages.value : [];
+        const hotelSearch = hotelResult.status === 'fulfilled'
+            ? hotelResult.value
+            : {
+                results: [],
+                provider: {
+                    provider: 'AMADEUS',
+                    operation: 'Hotel Search',
+                    status: 'UNAVAILABLE',
+                    statusCode: 'unknown',
+                    message: hotelResult.reason?.message || 'Hotel provider request failed.'
+                }
+            };
+        const hotelData = hotelSearch.results.map((hotel, index) => ({
+            ...hotel,
+            image: hotelImgs.length > 0 ? hotelImgs[index % hotelImgs.length] : hotel.image
+        }));
+
+        const searchWarnings = [
+            transportData.provider?.status === 'UNAVAILABLE'
+                ? `Flights unavailable: ${transportData.provider.message}`
+                : null,
+            hotelSearch.provider?.status === 'UNAVAILABLE'
+                ? `Hotels unavailable: ${hotelSearch.provider.message}`
+                : null
+        ].filter(Boolean);
 
         const fallbackHero = `https://images.unsplash.com/photo-1499856871958-5b9627545d1a?auto=format&fit=crop&w=1600&q=80`;
         const heroImage = (heroImages.status === 'fulfilled' && heroImages.value.length > 0) ? heroImages.value[0] : fallbackHero;
 
         console.log(`   ✅ Done: ${transportData.results?.length || 0} flights, ${hotelData.length} hotels, ${eventData.length} events`);
-        res.json({ transportData, hotelData, eventData, heroImage });
+        res.json({
+            transportData,
+            hotelData,
+            eventData,
+            heroImage,
+            searchWarnings,
+            providerStatus: {
+                flights: transportData.provider || { name: 'AMADEUS', status: 'UNKNOWN' },
+                hotels: hotelSearch.provider || { name: 'AMADEUS', status: 'UNKNOWN' }
+            }
+        });
 
     } catch (error) {
         console.error('❌ /api/search-all Error:', error.message);
-        res.json({ transportData: { type: 'none', results: [] }, hotelData: [], eventData: [], heroImage: null });
+        res.json({
+            transportData: { type: 'none', results: [], journey: null },
+            hotelData: [],
+            eventData: [],
+            heroImage: null,
+            searchWarnings: ['Search failed before provider results could be assembled.']
+        });
     }
 });
 
@@ -1216,15 +1318,19 @@ saveTripData(app);
 // ==================================================
 // 🏥 HEALTH CHECK ENDPOINT
 // ==================================================
-app.get('/api/health', (req, res) => {
+app.get('/api/health', async (req, res) => {
+    const amadeusHealth = await getAmadeusHealth(req.query.refresh === '1');
     res.json({
         status: 'OK',
         timestamp: new Date().toISOString(),
         uptime: process.uptime(),
         apis: {
-            amadeus: 'ACTIVE',
+            amadeus: amadeusHealth.status,
             ticketmaster: TICKETMASTER_KEY ? 'ACTIVE' : 'OFFLINE',
             unsplash: UNSPLASH_ACCESS_KEY ? 'ACTIVE' : 'OFFLINE'
+        },
+        apiDetails: {
+            amadeus: amadeusHealth
         },
         rateLimiter: {
             amadeusQueuedRequests: amadeusRequestQueue.active,

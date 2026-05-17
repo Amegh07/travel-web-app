@@ -1,0 +1,9 @@
+{
+  "trip_name": "API Smoke Test Trip",
+  "destination": {
+    "name": "Paris",
+    "code": "PAR"
+  },
+  "daily_plan": [],
+  "savedAt": "2026-05-17T04:50:00.208Z"
+}
