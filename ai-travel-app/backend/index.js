@@ -3,6 +3,16 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { runAgent, runAgentStream, AgentRole, keyManager } from './smartRouter.js';
 import { saveTripData } from './tripStore.js';
+import {
+  retryWithBackoff,
+  cityCacheManager,
+  hotelCacheManager,
+  amadeusRateLimiter,
+  amadeusRequestQueue,
+  createCityFallback,
+  createHotelFallbacks,
+  formatApiError
+} from './apiUtils.js';
 
 // Load secrets
 dotenv.config();
@@ -123,24 +133,55 @@ OUTPUT FORMAT (strict JSON, nothing else):
     }
 });
 
-// --- 🛠️ HELPER: RESOLVE CITY DATA (IATA + GEOCODE) ---
+// --- 🛠️ HELPER: RESOLVE CITY DATA (IATA + GEOCODE) WITH RETRY & CACHE ---
 async function resolveCityData(keyword) {
-    if (!keyword) return { iata: "LON", geo: { latitude: 51.5074, longitude: -0.1278 } }; // Fallback to London
+    if (!keyword) return { iata: "LON", geo: { latitude: 51.5074, longitude: -0.1278 } };
+    
+    // Check cache first
+    const cached = cityCacheManager.get(keyword);
+    if (cached) {
+        console.log(`   ✅ Using cached city data for "${keyword}"`);
+        return cached;
+    }
+
     try {
         console.log(`   🔎 Resolving City Data for: "${keyword}"...`);
-        const client = keyManager.getAmadeusClient("FLIGHTS");
-        const response = await client.referenceData.locations.get({
-            keyword,
-            subType: 'CITY,AIRPORT'
-        });
+        
+        const result = await retryWithBackoff(
+            async () => {
+                const client = keyManager.getAmadeusClient("FLIGHTS");
+                const response = await client.referenceData.locations.get({
+                    keyword,
+                    subType: 'CITY,AIRPORT'
+                });
+                return response.data?.[0];
+            },
+            3,
+            1000,
+            {
+                operationName: `City Resolution (${keyword})`,
+                rateLimiter: amadeusRateLimiter,
+                requestQueue: amadeusRequestQueue
+            }
+        );
 
-        const data = response.data?.[0];
-        return {
-            iata: data?.iataCode || keyword.substring(0, 3).toUpperCase(),
-            geo: data?.geoCode || null // Grabs the Latitude/Longitude!
+        const cityData = {
+            iata: result?.iataCode || keyword.substring(0, 3).toUpperCase(),
+            geo: result?.geoCode || null
         };
-    } catch {
-        return { iata: keyword.substring(0, 3).toUpperCase(), geo: null };
+        
+        // Cache the result
+        cityCacheManager.set(keyword, cityData);
+        return cityData;
+    } catch (error) {
+        const errorInfo = formatApiError(error, `City Resolution (${keyword})`);
+        console.error(`⚠️ City resolution failed: ${errorInfo.message}`);
+        
+        // Return fallback
+        return {
+            iata: keyword.substring(0, 3).toUpperCase(),
+            geo: null
+        };
     }
 }
 
@@ -241,32 +282,57 @@ async function fetchTicketmasterEvents(city, _date) {
 }
 
 // ==================================================
-// 🚨 PRIORITY ROUTE: CITY SEARCH
+// 🚨 PRIORITY ROUTE: CITY SEARCH WITH RETRY LOGIC
 // ==================================================
 app.get('/api/city-search', async (req, res) => {
     const { keyword } = req.query;
     try {
         if (!keyword || keyword.length < 2) return res.json([]);
-        const client = keyManager.getAmadeusClient("FLIGHTS");
-        const response = await client.referenceData.locations.get({ keyword, subType: 'CITY,AIRPORT' });
-        res.json(response.data);
-    } catch (error) { 
-        console.error("City Search Error:", error.message || error);
+
+        // Check cache first
+        const cached = cityCacheManager.get(keyword);
+        if (cached) {
+            console.log(`   ✅ Using cached search results for "${keyword}"`);
+            return res.json([cached]);
+        }
+
+        const result = await retryWithBackoff(
+            async () => {
+                const client = keyManager.getAmadeusClient("FLIGHTS");
+                const response = await client.referenceData.locations.get({
+                    keyword,
+                    subType: 'CITY,AIRPORT'
+                });
+                return response.data;
+            },
+            3,
+            1000,
+            {
+                operationName: `City Search (${keyword})`,
+                rateLimiter: amadeusRateLimiter,
+                requestQueue: amadeusRequestQueue
+            }
+        );
+
+        if (result && result.length > 0) {
+            // Cache the first result
+            cityCacheManager.set(keyword, result[0]);
+            res.json(result);
+        } else {
+            res.json([createCityFallback(keyword)]);
+        }
+    } catch (error) {
+        const errorInfo = formatApiError(error, `City Search (${keyword})`);
+        console.error(
+            `❌ City Search Error [${errorInfo.statusCode}]: ${errorInfo.message}`
+        );
         
-        // No mock data: If Amadeus is rate limited, aggressively fallback to whatever 
-        // string the user explicitly typed so they can still proceed without seeing 
-        // synthetic options or experiencing a crash.
-        const cleanKeyword = keyword.charAt(0).toUpperCase() + keyword.slice(1);
-        const pseudoIata = keyword.substring(0, 3).toUpperCase();
-        res.json([{ 
-            name: cleanKeyword, 
-            iataCode: pseudoIata, 
-            address: { countryName: "Global" } 
-        }]);
+        // Return graceful fallback with approximation flag
+        res.json([createCityFallback(keyword)]);
     }
 });
 
-// --- ✈️ ROUTE 2: FLIGHT SEARCH (One-Way + Round Trip) ---
+// --- ✈️ ROUTE 2: FLIGHT SEARCH (One-Way + Round Trip) WITH RETRY ---
 app.get('/api/flights', async (req, res) => {
     try {
         const { origin, destination, date, returnDate, tripType, currency, adults } = req.query;
@@ -275,32 +341,45 @@ app.get('/api/flights', async (req, res) => {
 
         const originData = await resolveCityData(origin);
         const destData   = await resolveCityData(destination);
-        const amadeus    = keyManager.getAmadeusClient("FLIGHTS");
 
-        const params = {
-            originLocationCode:      originData.iata,
-            destinationLocationCode: destData.iata,
-            departureDate:           date,
-            adults:                  String(numTravelers),
-            max:                     '10',
-            ...(currency && { currencyCode: currency }),
-            // Only add returnDate if it's a round trip AND returnDate exists
-            ...(tripType === 'round' && returnDate && { returnDate })
-        };
+        const result = await retryWithBackoff(
+            async () => {
+                const amadeus = keyManager.getAmadeusClient("FLIGHTS");
+                const params = {
+                    originLocationCode:      originData.iata,
+                    destinationLocationCode: destData.iata,
+                    departureDate:           date,
+                    adults:                  String(numTravelers),
+                    max:                     '10',
+                    ...(currency && { currencyCode: currency }),
+                    ...(tripType === 'round' && returnDate && { returnDate })
+                };
+                return await amadeus.shopping.flightOffersSearch.get(params);
+            },
+            3,
+            1000,
+            {
+                operationName: `Flight Search (${origin}->${destination})`,
+                rateLimiter: amadeusRateLimiter,
+                requestQueue: amadeusRequestQueue
+            }
+        );
 
-        const response = await amadeus.shopping.flightOffersSearch.get(params);
         res.json({
             type:    tripType === 'round' ? 'round_trip' : 'one_way',
-            results: response.data,
+            results: result.data,
             journey: { originHub: originData.iata, destHub: destData.iata }
         });
     } catch (err) {
-        console.error('Flight search error:', err.message);
+        const errorInfo = formatApiError(err, 'Flight Search');
+        console.error(
+            `❌ Flight Search Error [${errorInfo.statusCode}]: ${errorInfo.message}`
+        );
         res.json({ type: 'none', results: [] });
     }
 });
 
-// --- 🏨 ROUTE 3: HOTEL SEARCH (TWO-STEP: GEOCODE + REAL PRICING) ---
+// --- 🏨 ROUTE 3: HOTEL SEARCH (TWO-STEP: GEOCODE + REAL PRICING) WITH RETRY + CACHE ---
 app.get('/api/hotels', async (req, res) => {
     const targetCity  = req.query.destination || req.query.cityCode;
     const totalBudget = parseFloat(req.query.budget) || 5000;
@@ -315,16 +394,37 @@ app.get('/api/hotels', async (req, res) => {
         : 1;
 
     try {
+        // 1. CHECK CACHE FIRST
+        const cached = hotelCacheManager.get(targetCity, checkIn, checkOut, numTravelers, currency);
+        if (cached) {
+            console.log(`   ✅ Using cached hotel results for "${targetCity}"`);
+            return res.json(cached);
+        }
+
         const cityData = await resolveCityData(targetCity);
         if (!cityData.geo) throw new Error('Could not resolve Geocode for city.');
 
-        const amadeus = keyManager.getAmadeusClient('HOTELS');
-        const geoResponse = await amadeus.referenceData.locations.hotels.byGeocode.get({
-            latitude: cityData.geo.latitude, longitude: cityData.geo.longitude,
-            radius: 10, radiusUnit: 'KM'
-        });
+        const geoData = await retryWithBackoff(
+            async () => {
+                const amadeus = keyManager.getAmadeusClient('HOTELS');
+                const response = await amadeus.referenceData.locations.hotels.byGeocode.get({
+                    latitude: cityData.geo.latitude,
+                    longitude: cityData.geo.longitude,
+                    radius: 10,
+                    radiusUnit: 'KM'
+                });
+                return response.data;
+            },
+            3,
+            1000,
+            {
+                operationName: `Hotel Geocode Search (${targetCity})`,
+                rateLimiter: amadeusRateLimiter,
+                requestQueue: amadeusRequestQueue
+            }
+        );
 
-        const topHotels = [...geoResponse.data]
+        const topHotels = [...geoData]
             .sort((a, b) => (a.distance?.value || 99) - (b.distance?.value || 99))
             .slice(0, 20);
         const hotelIds = topHotels.map(h => h.hotelId).join(',');
@@ -332,22 +432,60 @@ app.get('/api/hotels', async (req, res) => {
         let offersMap = {};
         if (checkIn && checkOut && hotelIds) {
             try {
-                const offersResponse = await amadeus.shopping.hotelOffersSearch.get({
-                    hotelIds, checkInDate: checkIn, checkOutDate: checkOut,
-                    adults: String(numTravelers), roomQuantity: String(roomCount),
-                    currencyCode: currency, bestRateOnly: true
-                });
-                offersResponse.data.forEach(offer => {
+                const offersData = await retryWithBackoff(
+                    async () => {
+                        const amadeus = keyManager.getAmadeusClient('HOTELS');
+                        const response = await amadeus.shopping.hotelOffersSearch.get({
+                            hotelIds,
+                            checkInDate: checkIn,
+                            checkOutDate: checkOut,
+                            adults: String(numTravelers),
+                            roomQuantity: String(roomCount),
+                            currencyCode: currency,
+                            bestRateOnly: true
+                        });
+                        return response.data;
+                    },
+                    2,
+                    1000,
+                    {
+                        operationName: `Hotel Offers Search (${targetCity})`,
+                        rateLimiter: amadeusRateLimiter,
+                        requestQueue: amadeusRequestQueue
+                    }
+                );
+
+                offersData.forEach(offer => {
                     const price = offer.offers?.[0]?.price?.total;
                     if (price) offersMap[offer.hotel.hotelId] = parseFloat(price);
                 });
-            } catch { /* use estimates */ }
+            } catch (err) {
+                console.warn(`⚠️ Hotel offers search failed, using estimates: ${err.message}`);
+            }
         }
 
-        res.json(buildHotelResults(topHotels, offersMap, nights, currency, totalBudget));
+        const results = buildHotelResults(topHotels, offersMap, nights, currency, totalBudget);
+        
+        // 2. CACHE THE RESULTS
+        hotelCacheManager.set(targetCity, checkIn, checkOut, numTravelers, currency, results);
+        
+        res.json(results);
     } catch (error) {
-        console.error('Hotel API Error:', error.message);
-        res.json([]);
+        const errorInfo = formatApiError(error, 'Hotel Search');
+        console.error(
+            `❌ Hotel Search Error [${errorInfo.statusCode}]: ${errorInfo.message}`
+        );
+        
+        // Graceful fallback: Return estimated hotels instead of empty array
+        const dailyBudget = totalBudget / Math.max(1, nights);
+        const estimatedPricePerNight = currency === 'USD' 
+            ? (dailyBudget >= 300 ? 150 : 80)
+            : currency === 'EUR'
+            ? (dailyBudget >= 250 ? 120 : 70)
+            : (dailyBudget >= 20000 ? 5000 : 2000);
+        
+        const fallbackHotels = createHotelFallbacks(6, targetCity, estimatedPricePerNight, currency);
+        res.json(fallbackHotels);
     }
 });
 
@@ -1075,8 +1213,43 @@ If they ask something else, just return normal JSON: { "reply": "Your helpful te
 
 saveTripData(app);
 
+// ==================================================
+// 🏥 HEALTH CHECK ENDPOINT
+// ==================================================
+app.get('/api/health', (req, res) => {
+    res.json({
+        status: 'OK',
+        timestamp: new Date().toISOString(),
+        uptime: process.uptime(),
+        apis: {
+            amadeus: 'ACTIVE',
+            ticketmaster: TICKETMASTER_KEY ? 'ACTIVE' : 'OFFLINE',
+            unsplash: UNSPLASH_ACCESS_KEY ? 'ACTIVE' : 'OFFLINE'
+        },
+        rateLimiter: {
+            amadeusQueuedRequests: amadeusRequestQueue.active,
+            amadeusRateLimitStatus: amadeusRateLimiter.requests.length >= amadeusRateLimiter.maxRequests ? 'LIMITED' : 'OK'
+        }
+    });
+});
+
+// ==================================================
+// 🛡️ GLOBAL ERROR HANDLING MIDDLEWARE
+// ==================================================
+app.use((err, req, res, next) => {
+    console.error(`\n❌ Unhandled Error: ${err.message}`);
+    console.error(`   Stack: ${err.stack}`);
+    
+    res.status(err.status || 500).json({
+        error: err.message || 'Internal Server Error',
+        status: err.status || 500,
+        timestamp: new Date().toISOString()
+    });
+});
+
 // --- START SERVER ---
 app.listen(PORT, () => {
     console.log(`\n✅ Travex Server Running on http://localhost:${PORT}`);
     console.log(`   🎫 Ticketmaster: ${TICKETMASTER_KEY ? 'ACTIVE' : 'OFFLINE'}`);
+    console.log(`   📊 Health Check: http://localhost:${PORT}/api/health`);
 });
